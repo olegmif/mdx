@@ -1,4 +1,4 @@
-// Package db providex SQLite connection setup, schema migrations and queries for mdx metadata.
+// Package db provide SQLite connection setup, schema migrations and queries for mdx metadata.
 package db
 
 import (
