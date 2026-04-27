@@ -29,9 +29,9 @@ var nonFileSchemes = []string{
 	"#",
 }
 
-// Extract returns all file-targeting markdown links found in body.
+// ExtractLinks returns all file-targeting markdown links found in body.
 // Targets are returned verbatim (raw), without resolution to absolute paths.
-func Extract(body []byte) []Link {
+func ExtractLinks(body []byte) []Link {
 	matches := linkRe.FindAllSubmatchIndex(body, -1)
 	if len(matches) == 0 {
 		return nil

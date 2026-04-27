@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestExtract(t *testing.T) {
+func TestExtractLinks(t *testing.T) {
 	cases := []struct {
 		name  string
 		input string
@@ -61,7 +61,7 @@ func TestExtract(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Extract([]byte(tc.input))
+			got := ExtractLinks([]byte(tc.input))
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("got %#v, want %#v", got, tc.want)
 			}
