@@ -26,7 +26,7 @@ func TestScanEndToEnd(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	stats, err := Run(context.Background(), conn, []string{tmp}, DefaultExcludes)
+	stats, err := RunScan(context.Background(), conn, []string{tmp}, DefaultExcludes)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestScanEndToEnd(t *testing.T) {
 	}
 
 	// Re-running the scan must not duplicate rows (UPSERT behavior).
-	if _, err := Run(context.Background(), conn, []string{tmp}, DefaultExcludes); err != nil {
+	if _, err := RunScan(context.Background(), conn, []string{tmp}, DefaultExcludes); err != nil {
 		t.Fatalf("rerun Run: %v", err)
 	}
 	if got := count(t, conn, "SELECT COUNT(*) FROM notes"); got != 5 {

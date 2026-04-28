@@ -10,12 +10,14 @@ import (
 
 	"github.com/olegmif/mdx/lsp/internal/cli"
 	"github.com/olegmif/mdx/lsp/internal/db"
+	"github.com/olegmif/mdx/lsp/internal/lsp"
 )
 
 var (
 	flagDB       string
 	flagExcludes []string
 	flagQuiet    bool
+	flagLog      string
 )
 
 var rootCmd = &cobra.Command{
@@ -29,14 +31,21 @@ var scanCmd = &cobra.Command{
 	RunE:  runScan,
 }
 
+var lspCmd = &cobra.Command{
+	Use:   "lsp",
+	Short: "Run the LSP server on stdio",
+	RunE:  runLSP,
+}
+
 func init() {
-	scanCmd.Flags().StringVar(&flagDB, "db", "",
-		"path to SQLite database (default: $XDG_DATA_HOME/mdx/mdx.db)")
+	rootCmd.PersistentFlags().StringVar(&flagDB, "db", "", "path to SQLite database (default: $XDG_DATA_HOME/mdx/mdx.db)")
+	lspCmd.Flags().StringVar(&flagLog, "log", "", "path to LSP log file (default: $XDG_STATE_HOME/mdx/lsp.log)")
 	scanCmd.Flags().StringSliceVar(&flagExcludes, "exclude", nil,
 		"extra directory names to skip (added to defaults)")
 	scanCmd.Flags().BoolVarP(&flagQuiet, "quiet", "q", false,
 		"suppress summary line")
 	rootCmd.AddCommand(scanCmd)
+	rootCmd.AddCommand(lspCmd)
 }
 
 func main() {
@@ -77,7 +86,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	stats, err := cli.Run(ctx, conn, roots, excludes)
+	stats, err := cli.RunScan(ctx, conn, roots, excludes)
 	if err != nil {
 		return err
 	}
@@ -87,4 +96,29 @@ func runScan(cmd *cobra.Command, args []string) error {
 			stats.Files, stats.Errors, stats.Elapsed)
 	}
 	return nil
+}
+
+func runLSP(cmd *cobra.Command, args []string) error {
+	dbPath, err := db.ResolvePath(flagDB)
+	if err != nil {
+		return err
+	}
+	conn, err := db.Open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if err := db.Migrate(conn); err != nil {
+		return err
+	}
+
+	logPath, err := lsp.ResolveLogPath(flagLog)
+	if err != nil {
+		return err
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	return cli.RunLSP(ctx, conn, dbPath, logPath)
 }

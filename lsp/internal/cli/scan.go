@@ -27,10 +27,10 @@ var DefaultExcludes = []string{
 	".cache", "dist", "build", "vendor",
 }
 
-// Run scans every root, parsing each .md file and persisting metadata,
+// RunScan scans every root, parsing each .md file and persisting metadata,
 // outgoing links, and tags into the database. Per-file errors are reported
 // to stderr and counted; they do not abort the run.
-func Run(ctx context.Context, conn *sql.DB, roots, excludes []string) (Stats, error) {
+func RunScan(ctx context.Context, conn *sql.DB, roots, excludes []string) (Stats, error) {
 	start := time.Now()
 	var stats Stats
 
