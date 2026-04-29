@@ -1,12 +1,15 @@
 package lsp
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"runtime/debug"
 
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
+
+	"github.com/olegmif/mdx/lsp/internal/index"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -57,4 +60,36 @@ func (s *Server) onExit(ctx *glsp.Context) error {
 	}
 	os.Exit(1)
 	return nil
+}
+
+func (s *Server) onDidOpen(ctx *glsp.Context, params *protocol.DidOpenTextDocumentParams) error {
+	uri := string(params.TextDocument.URI)
+	path, err := URIToPath(uri)
+	if err != nil {
+		slog.Error("didOpen: uri", "uri", uri, "err", err)
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := index.IndexBytes(context.Background(), s.conn, path, []byte(params.TextDocument.Text))
+	if err != nil {
+		slog.Error("didOpen: index", "path", path, "err", err)
+		publishDiagnostics(ctx, uri, nil)
+		return nil
+	}
+
+	publishDiagnostics(ctx, uri, Build(result.Links))
+	return nil
+}
+
+func publishDiagnostics(ctx *glsp.Context, uri string, diags []protocol.Diagnostic) {
+	if diags == nil {
+		diags = []protocol.Diagnostic{}
+	}
+	ctx.Notify(protocol.ServerTextDocumentPublishDiagnostics, protocol.PublishDiagnosticsParams{
+		URI:         uri,
+		Diagnostics: diags,
+	})
 }
