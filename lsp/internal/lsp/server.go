@@ -23,6 +23,7 @@ func New(conn *sql.DB) *server.Server {
 		Shutdown:            s.onShutdown,
 		Exit:                s.onExit,
 		TextDocumentDidOpen: s.onDidOpen,
+		TextDocumentDidSave: s.onDidSave,
 	}
 	return server.NewServer(&handler, "mdx", false)
 }

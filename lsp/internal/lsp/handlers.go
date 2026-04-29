@@ -29,7 +29,7 @@ func (s *Server) onInitialize(ctx *glsp.Context, params *protocol.InitializePara
 		version = info.Main.Version
 	}
 
-	slog.Info("Initialize")
+	slog.Info("initialize")
 
 	return protocol.InitializeResult{
 		Capabilities: capabilities,
@@ -41,12 +41,12 @@ func (s *Server) onInitialize(ctx *glsp.Context, params *protocol.InitializePara
 }
 
 func (s *Server) onInitialized(ctx *glsp.Context, params *protocol.InitializedParams) error {
-	slog.Info("Initialized")
+	slog.Info("initialized")
 	return nil
 }
 
 func (s *Server) onShutdown(ctx *glsp.Context) error {
-	slog.Info("shitdown")
+	slog.Info("shutdown")
 	s.shutdown.Store(true)
 	if err := s.conn.Close(); err != nil {
 		slog.Error("db close", "err", err)
@@ -69,6 +69,7 @@ func (s *Server) onDidOpen(ctx *glsp.Context, params *protocol.DidOpenTextDocume
 		slog.Error("didOpen: uri", "uri", uri, "err", err)
 		return nil
 	}
+	slog.Info("didOpen", "path", path)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -92,4 +93,27 @@ func publishDiagnostics(ctx *glsp.Context, uri string, diags []protocol.Diagnost
 		URI:         uri,
 		Diagnostics: diags,
 	})
+}
+
+func (s *Server) onDidSave(ctx *glsp.Context, params *protocol.DidSaveTextDocumentParams) error {
+	uri := string(params.TextDocument.URI)
+	path, err := URIToPath(uri)
+	if err != nil {
+		slog.Error("didSave: uri", "uri", uri, "err", err)
+		return nil
+	}
+	slog.Info("didSave", "path", path)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := index.IndexFile(context.Background(), s.conn, path)
+	if err != nil {
+		slog.Error("didSave: index", "path", path, "err", err)
+		publishDiagnostics(ctx, uri, nil)
+		return nil
+	}
+
+	publishDiagnostics(ctx, uri, Build(result.Links))
+	return nil
 }

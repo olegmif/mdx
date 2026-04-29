@@ -105,3 +105,80 @@ func TestOnDidOpen(t *testing.T) {
 		t.Errorf("diagnostics = %d, want 1", len(pd.Diagnostics))
 	}
 }
+
+func TestOnDidSave(t *testing.T) {
+	tmp := t.TempDir()
+	mdPath := filepath.Join(tmp, "test.md")
+	if err := os.WriteFile(mdPath, []byte("# v1\n[broken](./nope.md)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(filepath.Join(tmp, "mdx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := db.Migrate(conn); err != nil {
+		t.Fatal(err)
+	}
+
+	type call struct {
+		method string
+		params any
+	}
+	var calls []call
+	ctx := &glsp.Context{
+		Notify: func(method string, params any) {
+			calls = append(calls, call{method, params})
+		},
+	}
+
+	s := &Server{conn: conn}
+
+	// Первое сохранение — индекс должен появиться.
+	if err := s.onDidSave(ctx, &protocol.DidSaveTextDocumentParams{
+		TextDocument: protocol.TextDocumentIdentifier{
+			URI: protocol.DocumentUri(PathToURI(mdPath)),
+		},
+	}); err != nil {
+		t.Fatalf("onDidSave: %v", err)
+	}
+
+	var hash1 string
+	if err := conn.QueryRow(`SELECT content_hash FROM notes WHERE path = ?`, mdPath).Scan(&hash1); err != nil {
+		t.Fatalf("read hash1: %v", err)
+	}
+
+	// Перезаписываем файл и сохраняем снова — хеш в БД должен обновиться.
+	if err := os.WriteFile(mdPath, []byte("# v2\n[broken](./nope.md)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.onDidSave(ctx, &protocol.DidSaveTextDocumentParams{
+		TextDocument: protocol.TextDocumentIdentifier{
+			URI: protocol.DocumentUri(PathToURI(mdPath)),
+		},
+	}); err != nil {
+		t.Fatalf("onDidSave (rerun): %v", err)
+	}
+
+	var hash2 string
+	if err := conn.QueryRow(`SELECT content_hash FROM notes WHERE path = ?`, mdPath).Scan(&hash2); err != nil {
+		t.Fatalf("read hash2: %v", err)
+	}
+	if hash1 == hash2 {
+		t.Errorf("hash unchanged after rewrite: %s", hash1)
+	}
+
+	if len(calls) != 2 {
+		t.Fatalf("notifications = %d, want 2", len(calls))
+	}
+	for i, c := range calls {
+		pd, ok := c.params.(protocol.PublishDiagnosticsParams)
+		if !ok {
+			t.Fatalf("call[%d] params type %T", i, c.params)
+		}
+		if len(pd.Diagnostics) != 1 {
+			t.Errorf("call[%d] diagnostics = %d, want 1", i, len(pd.Diagnostics))
+		}
+	}
+}
