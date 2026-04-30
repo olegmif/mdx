@@ -120,5 +120,5 @@ func (s *Server) onDidSave(ctx *glsp.Context, params *protocol.DidSaveTextDocume
 }
 
 func (s *Server) onListNotes(ctx *glsp.Context) ([]db.NoteEntry, error) {
-	return nil, nil
+	return db.ListNotes(s.conn)
 }

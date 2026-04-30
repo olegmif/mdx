@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 	"github.com/tliron/glsp/server"
 )
@@ -15,9 +16,26 @@ type Server struct {
 	mu       sync.Mutex
 }
 
+// mdxHandler оборачивает стандартный glsp protocol.Handler,
+// перехватывая кастомные методы (mdx/*) перед делегированием.
+type mdxHandler struct {
+	base   *protocol.Handler
+	server *Server
+}
+
+func (h *mdxHandler) Handle(ctx *glsp.Context) (any, bool, bool, error) {
+	switch ctx.Method {
+	case "mdx/listNotes":
+		result, err := h.server.onListNotes(ctx)
+		return result, true, true, err
+	default:
+		return h.base.Handle(ctx)
+	}
+}
+
 func New(conn *sql.DB) *server.Server {
 	s := &Server{conn: conn}
-	handler := protocol.Handler{
+	base := &protocol.Handler{
 		Initialize:          s.onInitialize,
 		Initialized:         s.onInitialized,
 		Shutdown:            s.onShutdown,
@@ -25,5 +43,5 @@ func New(conn *sql.DB) *server.Server {
 		TextDocumentDidOpen: s.onDidOpen,
 		TextDocumentDidSave: s.onDidSave,
 	}
-	return server.NewServer(&handler, "mdx", false)
+	return server.NewServer(&mdxHandler{base: base, server: s}, "mdx", false)
 }

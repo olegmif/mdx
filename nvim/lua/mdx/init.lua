@@ -35,10 +35,17 @@ function M.follow_split()
 	return open_link(vim.cmd.vsplit)
 end
 
+function M.insert_link()
+	vim.notify("mdx: insert_link not implemented yet")
+end
+
 function M.setup(opts)
 	M.config = vim.tbl_deep_extend("force", defaults, opts or {})
 	vim.api.nvim_create_user_command("MdxFollow", M.follow, {})
 	vim.api.nvim_create_user_command("MdxFollowSplit", M.follow_split, {})
+	vim.api.nvim_create_user_command("MdxInsertLink", function()
+		require("mdx").insert_link()
+	end, {})
 end
 
 return M

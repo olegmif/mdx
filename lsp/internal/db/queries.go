@@ -81,5 +81,25 @@ func ReplaceTags(tx *sql.Tx, sourcePath string, tags []string) error {
 }
 
 func ListNotes(db *sql.DB) ([]NoteEntry, error) {
-	return nil, nil
+	rows, err := db.Query(`
+		SELECT path, COALESCE(title, '') AS title
+		FROM notes
+		ORDER BY (COALESCE(title, '') = '') ASC,
+		         title COLLATE NOCASE,
+		         path
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := []NoteEntry{}
+	for rows.Next() {
+		var entry NoteEntry
+		if err := rows.Scan(&entry.Path, &entry.Title); err != nil {
+			return nil, err
+		}
+		result = append(result, entry)
+	}
+	return result, rows.Err()
 }

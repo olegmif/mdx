@@ -190,3 +190,109 @@ func TestServerRoundTrip(t *testing.T) {
 		t.Fatal("server did not finish")
 	}
 }
+
+func TestServerListNotes(t *testing.T) {
+	tmp := t.TempDir()
+	conn, err := db.Open(filepath.Join(tmp, "mdx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrate(conn); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := conn.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertNote(tx, db.NoteRecord{Path: "/notes/a.md", Title: "Alpha"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertNote(tx, db.NoteRecord{Path: "/notes/b.md", Title: "Beta"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	inR, inW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origStdin, origStdout := os.Stdin, os.Stdout
+	os.Stdin = inR
+	os.Stdout = outW
+	t.Cleanup(func() {
+		os.Stdin = origStdin
+		os.Stdout = origStdout
+	})
+
+	srv := New(conn)
+	done := make(chan error, 1)
+	go func() { done <- srv.RunStdio() }()
+
+	reader := bufio.NewReader(outR)
+	send := func(payload map[string]any) {
+		t.Helper()
+		b, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := frameWrite(inW, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	send(map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "initialize",
+		"params": map[string]any{"processId": 1, "rootUri": nil, "capabilities": map[string]any{}},
+	})
+	if _, err := frameRead(reader); err != nil {
+		t.Fatalf("initialize response: %v", err)
+	}
+
+	send(map[string]any{"jsonrpc": "2.0", "method": "initialized", "params": map[string]any{}})
+
+	send(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "mdx/listNotes", "params": map[string]any{}})
+	body, err := frameRead(reader)
+	if err != nil {
+		t.Fatalf("listNotes response: %v", err)
+	}
+	var listResp struct {
+		ID     int            `json:"id"`
+		Result []db.NoteEntry `json:"result"`
+	}
+	if err := json.Unmarshal(body, &listResp); err != nil {
+		t.Fatalf("unmarshal: %v\nbody: %s", err, body)
+	}
+	if listResp.ID != 2 {
+		t.Errorf("ID = %d, want 2", listResp.ID)
+	}
+	if len(listResp.Result) != 2 {
+		t.Fatalf("got %d entries, want 2: %+v", len(listResp.Result), listResp.Result)
+	}
+	if listResp.Result[0] != (db.NoteEntry{Path: "/notes/a.md", Title: "Alpha"}) {
+		t.Errorf("entry[0] = %+v", listResp.Result[0])
+	}
+	if listResp.Result[1] != (db.NoteEntry{Path: "/notes/b.md", Title: "Beta"}) {
+		t.Errorf("entry[1] = %+v", listResp.Result[1])
+	}
+
+	send(map[string]any{"jsonrpc": "2.0", "id": 3, "method": "shutdown"})
+	if _, err := frameRead(reader); err != nil {
+		t.Fatalf("shutdown response: %v", err)
+	}
+	inW.Close()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("RunStdio: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not finish")
+	}
+}

@@ -192,3 +192,59 @@ func TestReplaceTags(t *testing.T) {
 		t.Errorf("tag = %q, want python", tag)
 	}
 }
+
+func TestListNotesEmpty(t *testing.T) {
+	conn := setupDB(t)
+
+	got, err := ListNotes(conn)
+	if err != nil {
+		t.Fatalf("ListNotes: %v", err)
+	}
+	if got == nil {
+		t.Fatal("got nil, want empty slice")
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d entries, want 0", len(got))
+	}
+}
+
+func TestListNotesSorted(t *testing.T) {
+	conn := setupDB(t)
+
+	tx, err := conn.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := []NoteRecord{
+		{Path: "/notes/c.md", Title: "Charlie"},
+		{Path: "/notes/a.md", Title: "alpha"},
+		{Path: "/notes/b.md", Title: ""},
+		{Path: "/notes/d.md", Title: "Bravo"},
+	}
+	for _, n := range seed {
+		if err := UpsertNote(tx, n); err != nil {
+			t.Fatalf("UpsertNote: %v", err)
+		}
+	}
+	mustCommit(t, tx)
+
+	got, err := ListNotes(conn)
+	if err != nil {
+		t.Fatalf("ListNotes: %v", err)
+	}
+
+	want := []NoteEntry{
+		{Path: "/notes/a.md", Title: "alpha"},
+		{Path: "/notes/d.md", Title: "Bravo"},
+		{Path: "/notes/c.md", Title: "Charlie"},
+		{Path: "/notes/b.md", Title: ""},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d entries, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("entry[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}

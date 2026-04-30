@@ -182,3 +182,44 @@ func TestOnDidSave(t *testing.T) {
 		}
 	}
 }
+
+func TestOnListNotes(t *testing.T) {
+	tmp := t.TempDir()
+	conn, err := db.Open(filepath.Join(tmp, "mdx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := db.Migrate(conn); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertNote(tx, db.NoteRecord{Path: "/notes/a.md", Title: "Alpha"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertNote(tx, db.NoteRecord{Path: "/notes/b.md", Title: "Beta"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{conn: conn}
+	got, err := s.onListNotes(nil)
+	if err != nil {
+		t.Fatalf("onListNotes: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d entries, want 2", len(got))
+	}
+	if got[0].Path != "/notes/a.md" || got[0].Title != "Alpha" {
+		t.Errorf("entry[0] = %+v", got[0])
+	}
+	if got[1].Path != "/notes/b.md" || got[1].Title != "Beta" {
+		t.Errorf("entry[1] = %+v", got[1])
+	}
+}
