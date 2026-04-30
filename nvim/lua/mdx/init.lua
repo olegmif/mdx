@@ -1,9 +1,14 @@
 local M = {}
 
-function M.setup(opts)
-	vim.api.nvim_create_user_command("MdxFollow", M.follow, {})
-	vim.api.nvim_create_user_command("MdxFollowSplit", M.follow_split, {})
-end
+local defaults = {
+	keymaps = {
+		follow = "<leader>mf",
+		follow_split = "<leader>ms",
+	},
+	conceal = true,
+}
+
+M.config = vim.deepcopy(defaults)
 
 local function open_link(opener)
 	local link = require("mdx.link").under_cursor()
@@ -28,6 +33,12 @@ end
 
 function M.follow_split()
 	return open_link(vim.cmd.vsplit)
+end
+
+function M.setup(opts)
+	M.config = vim.tbl_deep_extend("force", defaults, opts or {})
+	vim.api.nvim_create_user_command("MdxFollow", M.follow, {})
+	vim.api.nvim_create_user_command("MdxFollowSplit", M.follow_split, {})
 end
 
 return M

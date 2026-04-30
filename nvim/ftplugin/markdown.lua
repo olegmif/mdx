@@ -1,4 +1,21 @@
--- mdx: настройки markdown-буфера. Наполняется в Шаге 5 (conceal) и Шаге 6 (keymaps)
+-- mdx: настройки markdown-буфера. Применяются для буфера на основе M.congig
 
-vim.opt_local.conceallevel = 2
-vim.opt_local.concealcursor = ""
+local mdx = require("mdx")
+local config = mdx.config
+
+if config.conceal then
+	vim.opt_local.conceallevel = 2
+	vim.opt_local.concealcursor = ""
+end
+
+if config.keymaps.follow then
+	vim.keymap.set("n", config.keymaps.follow, function()
+		mdx.follow()
+	end, { buffer = true, desc = "mdx: follow link" })
+end
+
+if config.keymaps.follow_split then
+	vim.keymap.set("n", config.keymaps.follow_split, function()
+		mdx.follow_split()
+	end, { buffer = true, desc = "mdx: follow link in vsplit" })
+end
