@@ -30,12 +30,16 @@ function M.open(opts, on_select)
 					local display_path = insert.to_display_path(entry.path)
 					return {
 						value = entry,
+						-- path нужен telescope-previewer'у, чтобы он знал
+						-- какой файл показывать в правом окне.
+						path = entry.path,
 						display = string.format("%s (%s)", entry.title, display_path),
 						ordinal = entry.title .. " " .. entry.path,
 					}
 				end,
 			}),
 			sorter = conf.generic_sorter({}),
+			previewer = conf.file_previewer({}),
 			attach_mappings = function(prompt_bufnr, _)
 				actions.select_default:replace(function()
 					local selection = action_state.get_selected_entry()

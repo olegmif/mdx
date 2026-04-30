@@ -198,11 +198,15 @@ func TestOnListNotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertNote(tx, db.NoteRecord{Path: "/notes/a.md", Title: "Alpha"}); err != nil {
-		t.Fatal(err)
+	seed := []db.NoteRecord{
+		{Path: "/notes/charlie.md", Title: "Alpha"},
+		{Path: "/notes/bravo.md", Title: ""}, // fallback на basename: "bravo"
+		{Path: "/notes/delta.md", Title: "Charlie"},
 	}
-	if err := db.UpsertNote(tx, db.NoteRecord{Path: "/notes/b.md", Title: "Beta"}); err != nil {
-		t.Fatal(err)
+	for _, n := range seed {
+		if err := db.UpsertNote(tx, n); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
@@ -213,13 +217,18 @@ func TestOnListNotes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("onListNotes: %v", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("got %d entries, want 2", len(got))
+
+	want := []db.NoteEntry{
+		{Path: "/notes/charlie.md", Title: "Alpha"},
+		{Path: "/notes/bravo.md", Title: "bravo"},
+		{Path: "/notes/delta.md", Title: "Charlie"},
 	}
-	if got[0].Path != "/notes/a.md" || got[0].Title != "Alpha" {
-		t.Errorf("entry[0] = %+v", got[0])
+	if len(got) != len(want) {
+		t.Fatalf("got %d entries, want %d: %+v", len(got), len(want), got)
 	}
-	if got[1].Path != "/notes/b.md" || got[1].Title != "Beta" {
-		t.Errorf("entry[1] = %+v", got[1])
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("entry[%d] = %+v, want %+v", i, got[i], want[i])
+		}
 	}
 }

@@ -4,7 +4,10 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime/debug"
+	"sort"
+	"strings"
 
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
@@ -120,5 +123,27 @@ func (s *Server) onDidSave(ctx *glsp.Context, params *protocol.DidSaveTextDocume
 }
 
 func (s *Server) onListNotes(ctx *glsp.Context) ([]db.NoteEntry, error) {
-	return db.ListNotes(s.conn)
+	entries, err := db.ListNotes(s.conn)
+	if err != nil {
+		return nil, err
+	}
+	// Если в БД title пустой (frontmatter без title) — подставляем basename
+	// без расширения, чтобы picker не показывал пустую строку и чтобы
+	// формируемая ссылка не получалась как "[](path)".
+	for i := range entries {
+		if entries[i].Title == "" {
+			entries[i].Title = strings.TrimSuffix(
+				filepath.Base(entries[i].Path), ".md")
+		}
+	}
+	// Сортировка после fallback'а: case-insensitive по заголовку, потом по пути.
+	sort.Slice(entries, func(i, j int) bool {
+		ti := strings.ToLower(entries[i].Title)
+		tj := strings.ToLower(entries[j].Title)
+		if ti != tj {
+			return ti < tj
+		}
+		return entries[i].Path < entries[j].Path
+	})
+	return entries, nil
 }

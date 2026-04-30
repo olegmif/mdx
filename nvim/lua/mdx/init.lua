@@ -4,6 +4,7 @@ local defaults = {
 	keymaps = {
 		follow = "<leader>mf",
 		follow_split = "<leader>ms",
+		insert_link = "<leader>mi",
 	},
 	conceal = true,
 }

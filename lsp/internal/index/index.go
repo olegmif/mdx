@@ -19,6 +19,7 @@ import (
 // filesystem path. Callers use it to validate or render a link without
 // re-parsing the file.
 type ResolvedLink struct {
+	Text       string
 	RawTarget  string
 	TargetPath string
 	Line       int
@@ -70,6 +71,7 @@ func IndexBytes(ctx context.Context, conn *sql.DB, path string, content []byte) 
 	for _, l := range rawLinks {
 		target := resolveTarget(sourceDir, l.RawTarget)
 		resolved = append(resolved, ResolvedLink{
+			Text:       l.Text,
 			RawTarget:  l.RawTarget,
 			TargetPath: target,
 			Line:       l.Line,

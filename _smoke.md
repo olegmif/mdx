@@ -11,3 +11,7 @@
   Простой текст без ссылки.
 
 [With Frontmatter](~/projects/mdx/lsp/internal/cli/testdata/fixtures/with-frontmatter.md)
+some text [](~/projects/mdx/README.md)
+
+
+

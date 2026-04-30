@@ -13,26 +13,37 @@ import (
 func Build(links []index.ResolvedLink) []protocol.Diagnostic {
 	out := make([]protocol.Diagnostic, 0, len(links))
 	for _, l := range links {
-		_, err := os.Lstat(l.TargetPath)
-		if err == nil {
-			continue
-		}
-		if !errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
 		line := protocol.UInteger(l.Line - 1)
 		col := protocol.UInteger(l.Col - 1)
-		sev := protocol.DiagnosticSeverityWarning
 		src := "mdx"
-		out = append(out, protocol.Diagnostic{
-			Range: protocol.Range{
-				Start: protocol.Position{Line: line, Character: col},
-				End:   protocol.Position{Line: line, Character: col},
-			},
-			Severity: &sev,
-			Source:   &src,
-			Message:  fmt.Sprintf("broken link: %s", l.RawTarget),
-		})
+		rng := protocol.Range{
+			Start: protocol.Position{Line: line, Character: col},
+			End:   protocol.Position{Line: line, Character: col},
+		}
+
+		// Empty link text: ссылка вида [](target). Conceal скрывает её
+		// целиком (нечего показывать в качестве text), поэтому помечаем
+		// как warning, чтобы пользователь её увидел и починил вручную.
+		if l.Text == "" {
+			sev := protocol.DiagnosticSeverityWarning
+			out = append(out, protocol.Diagnostic{
+				Range:    rng,
+				Severity: &sev,
+				Source:   &src,
+				Message:  fmt.Sprintf("empty link title: [](%s)", l.RawTarget),
+			})
+		}
+
+		// Broken target: целевой файл не существует.
+		if _, err := os.Lstat(l.TargetPath); err != nil && errors.Is(err, fs.ErrNotExist) {
+			sev := protocol.DiagnosticSeverityWarning
+			out = append(out, protocol.Diagnostic{
+				Range:    rng,
+				Severity: &sev,
+				Source:   &src,
+				Message:  fmt.Sprintf("broken link: %s", l.RawTarget),
+			})
+		}
 	}
 	return out
 }

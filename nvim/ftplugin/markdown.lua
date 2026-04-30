@@ -19,3 +19,9 @@ if config.keymaps.follow_split then
 		mdx.follow_split()
 	end, { buffer = true, desc = "mdx: follow link in vsplit" })
 end
+
+if config.keymaps.insert_link then
+	vim.keymap.set("n", config.keymaps.insert_link, function()
+		mdx.insert_link()
+	end, { buffer = true, desc = "mdx: insert link to existing note" })
+end
