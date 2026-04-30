@@ -24,6 +24,11 @@ type LinkRecord struct {
 	Col        int
 }
 
+type NoteEntry struct {
+	Path  string `json:"path"`
+	Title string `json:"title"`
+}
+
 // UpsertNote inserts or replaces a row in the notes table by path.
 func UpsertNote(tx *sql.Tx, n NoteRecord) error {
 	_, err := tx.Exec(
@@ -73,4 +78,8 @@ func ReplaceTags(tx *sql.Tx, sourcePath string, tags []string) error {
 		}
 	}
 	return nil
+}
+
+func ListNotes(db *sql.DB) ([]NoteEntry, error) {
+	return nil, nil
 }

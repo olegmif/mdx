@@ -9,6 +9,7 @@ import (
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 
+	"github.com/olegmif/mdx/lsp/internal/db"
 	"github.com/olegmif/mdx/lsp/internal/index"
 )
 
@@ -116,4 +117,8 @@ func (s *Server) onDidSave(ctx *glsp.Context, params *protocol.DidSaveTextDocume
 
 	publishDiagnostics(ctx, uri, Build(result.Links))
 	return nil
+}
+
+func (s *Server) onListNotes(ctx *glsp.Context) ([]db.NoteEntry, error) {
+	return nil, nil
 }
