@@ -36,7 +36,16 @@ function M.follow_split()
 end
 
 function M.insert_link()
-	return vim.notify("mdx: insert_link not implemented yet")
+	local buf_name = vim.api.nvim_buf_get_name(0)
+	local source_dir = vim.fs.dirname(buf_name)
+	if source_dir == "" or source_dir == "." then
+		source_dir = vim.fn.getcwd()
+	end
+
+	require("mdx.picker").open(M.config, function(entry)
+		local link = require("mdx.insert").format_link(entry.path, source_dir, entry.title)
+		require("mdx.insert").at_cursor(link)
+	end)
 end
 
 function M.setup(opts)

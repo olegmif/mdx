@@ -42,5 +42,8 @@ function M.format_link(target_path, source_dir, title) -- returns string
 	return "[" .. title .. "](" .. rel .. ")"
 end
 
-function M.at_cursor(link_string) end
+function M.at_cursor(link_string)
+	vim.api.nvim_put({ link_string }, "c", true, true)
+end
+
 return M
