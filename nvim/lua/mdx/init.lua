@@ -1,9 +1,13 @@
 local M = {}
 
 local defaults = {
+	root = nil,
+	link_text = "auto",
+	exclude = {},
 	keymaps = {
 		follow = "<leader>mf",
 		follow_split = "<leader>ms",
+		insert_link = "<leader>mi",
 	},
 	conceal = true,
 }
