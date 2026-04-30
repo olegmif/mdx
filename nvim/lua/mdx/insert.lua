@@ -1,23 +1,24 @@
 local M = {}
 
-function M.format_link(path, title)
+function M.to_display_path(path)
 	local normalized = vim.fs.normalize(path)
 	local home = vim.fs.normalize(vim.fn.expand("~"))
 
-	local link_path
 	if normalized == home then
-		link_path = "~"
+		return "~"
 	elseif vim.startswith(normalized, home .. "/") then
-		link_path = "~" .. normalized:sub(#home + 1)
+		return "~" .. normalized:sub(#home + 1)
 	else
-		link_path = normalized
+		return normalized
 	end
+end
 
-	return "[" .. title .. "](" .. link_path .. ")"
+function M.format_link(path, title)
+	return "[" .. title .. "](" .. M.to_display_path(path) .. ")"
 end
 
 function M.at_cursor(link_string)
-	return nil
+	vim.api.nvim_put({ link_string }, "c", true, true)
 end
 
 return M

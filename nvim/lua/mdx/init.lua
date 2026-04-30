@@ -36,7 +36,11 @@ function M.follow_split()
 end
 
 function M.insert_link()
-	vim.notify("mdx: insert_link not implemented yet")
+	require("mdx.picker").open(M.config, function(entry)
+		local insert = require("mdx.insert")
+		local link = insert.format_link(entry.path, entry.title)
+		insert.at_cursor(link)
+	end)
 end
 
 function M.setup(opts)
