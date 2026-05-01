@@ -23,6 +23,11 @@ func ExtractTags(frontmatter map[string]any, body []byte) []string {
 
 	add := func(tag string) {
 		tag = strings.TrimSpace(tag)
+		// Frontmatter tags могут быть записаны с ведущим '#' (Obsidian-стиль:
+		// `tags: ["#gtd/reference"]`). Обрезаем, чтобы такие теги нормализовались
+		// в ту же форму, что и теги из тела (где '#' захватывается regex'ом и не
+		// попадает в результат).
+		tag = strings.TrimPrefix(tag, "#")
 		if tag == "" {
 			return
 		}

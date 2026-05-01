@@ -48,6 +48,35 @@ func TestExtractTags(t *testing.T) {
 			body: "look at issue#123 and notthe#tag here\n",
 			want: nil,
 		},
+		{
+			name: "frontmatter array strips leading #",
+			frontmatter: map[string]any{
+				"tags": []any{"#gtd/reference", "go", "#notes/sub"},
+			},
+			want: []string{"gtd/reference", "go", "notes/sub"},
+		},
+		{
+			name: "frontmatter comma strips leading #",
+			frontmatter: map[string]any{
+				"tags": "#go, notes ,  #rust",
+			},
+			want: []string{"go", "notes", "rust"},
+		},
+		{
+			name: "frontmatter # alone is dropped",
+			frontmatter: map[string]any{
+				"tags": []any{"#", "go"},
+			},
+			want: []string{"go"},
+		},
+		{
+			name: "frontmatter #foo and body #foo dedup to single foo",
+			frontmatter: map[string]any{
+				"tags": []any{"#shared"},
+			},
+			body: "see #shared again\n",
+			want: []string{"shared"},
+		},
 	}
 
 	for _, tc := range cases {
