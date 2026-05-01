@@ -54,4 +54,8 @@ function M.open(opts, on_select)
 		:find()
 end
 
+function M.tag_search(opts, on_select) -- on_select(note_entry)
+	vim.notify("mdx: tag_search not implemented yet", vim.log.levels.INFO)
+end
+
 return M

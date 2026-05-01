@@ -103,3 +103,7 @@ func ListNotes(db *sql.DB) ([]NoteEntry, error) {
 	}
 	return result, rows.Err()
 }
+
+func SearchByTags(db *sql.DB, include []string, exclude []string) ([]NoteEntry, error) {
+	return nil, nil
+}

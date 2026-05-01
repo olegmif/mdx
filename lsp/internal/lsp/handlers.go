@@ -147,3 +147,7 @@ func (s *Server) onListNotes(ctx *glsp.Context) ([]db.NoteEntry, error) {
 	})
 	return entries, nil
 }
+
+func (s *Server) onSearchByTags(ctx *glsp.Context, include []string, exclude []string) ([]db.NoteEntry, error) {
+	return nil, nil
+}

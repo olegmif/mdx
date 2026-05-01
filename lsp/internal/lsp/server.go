@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"database/sql"
+	"encoding/json"
 	"sync"
 	"sync/atomic"
 
@@ -27,6 +28,16 @@ func (h *mdxHandler) Handle(ctx *glsp.Context) (any, bool, bool, error) {
 	switch ctx.Method {
 	case "mdx/listNotes":
 		result, err := h.server.onListNotes(ctx)
+		return result, true, true, err
+	case "mdx/searchByTags":
+		var p struct {
+			Include []string `json:"include"`
+			Exclude []string `json:"exclude"`
+		}
+		if err := json.Unmarshal(ctx.Params, &p); err != nil {
+			return nil, true, true, err
+		}
+		result, err := h.server.onSearchByTags(ctx, p.Include, p.Exclude)
 		return result, true, true, err
 	default:
 		return h.base.Handle(ctx)

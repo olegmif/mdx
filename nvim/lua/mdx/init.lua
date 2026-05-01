@@ -5,6 +5,7 @@ local defaults = {
 		follow = "<leader>mf",
 		follow_split = "<leader>ms",
 		insert_link = "<leader>mi",
+		tag_search = "<leader>mt",
 	},
 	conceal = true,
 }
@@ -36,6 +37,10 @@ function M.follow_split()
 	return open_link(vim.cmd.vsplit)
 end
 
+function M.tag_search()
+	require("mdx.picker").tag_search(M.config, function() end)
+end
+
 function M.insert_link()
 	require("mdx.picker").open(M.config, function(entry)
 		local insert = require("mdx.insert")
@@ -50,6 +55,9 @@ function M.setup(opts)
 	vim.api.nvim_create_user_command("MdxFollowSplit", M.follow_split, {})
 	vim.api.nvim_create_user_command("MdxInsertLink", function()
 		require("mdx").insert_link()
+	end, {})
+	vim.api.nvim_create_user_command("MdxTagSearch", function()
+		require("mdx").tag_search()
 	end, {})
 end
 
