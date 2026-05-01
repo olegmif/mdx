@@ -38,7 +38,9 @@ function M.follow_split()
 end
 
 function M.tag_search()
-	require("mdx.picker").tag_search(M.config, function() end)
+	require("mdx.picker").tag_search(M.config, function(entry)
+		vim.cmd.edit(vim.fn.fnameescape(entry.path))
+	end)
 end
 
 function M.insert_link()

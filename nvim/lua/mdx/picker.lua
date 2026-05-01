@@ -55,7 +55,54 @@ function M.open(opts, on_select)
 end
 
 function M.tag_search(opts, on_select) -- on_select(note_entry)
-	vim.notify("mdx: tag_search not implemented yet", vim.log.levels.INFO)
+	local ok, pickers = pcall(require, "telescope.pickers")
+	if not ok then
+		vim.notify("mdx: telescope.nvim is required", vim.log.levels.ERROR)
+		return
+	end
+	local finders = require("telescope.finders")
+	local sorters = require("telescope.sorters")
+	local conf = require("telescope.config").values
+	local actions = require("telescope.actions")
+	local action_state = require("telescope.actions.state")
+	local tags = require("mdx.tags")
+	local insert = require("mdx.insert")
+
+	pickers
+		.new({}, {
+			prompt_title = "mdx: tag search",
+			finder = finders.new_dynamic({
+				fn = function(prompt)
+					local include, exclude = tags.parse_query(prompt)
+					return tags.search(include, exclude) or {}
+				end,
+				entry_maker = function(entry)
+					local display_path = insert.to_display_path(entry.path)
+					return {
+						value = entry,
+						path = entry.path,
+						display = string.format("%s (%s)", entry.title, display_path),
+						ordinal = entry.title .. " " .. entry.path,
+					}
+				end,
+			}),
+			-- No-op sorter: фильтрация и порядок задаются сервером в `tags.search`,
+			-- telescope не должен поверх ещё раз fuzzy-матчить prompt против
+			-- ordinal'а — это даёт двойную фильтрацию и ложные совпадения по пути.
+			sorter = sorters.empty(),
+			previewer = conf.file_previewer({}),
+			attach_mappings = function(prompt_bufnr, _)
+				actions.select_default:replace(function()
+					local selection = action_state.get_selected_entry()
+					actions.close(prompt_bufnr)
+					if selection and on_select then
+						on_select(selection.value)
+					end
+				end)
+				return true
+			end,
+		})
+		:find()
 end
 
 return M

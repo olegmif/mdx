@@ -50,3 +50,21 @@ describe("mdx.tags.parse_query", function()
 		end)
 	end
 end)
+
+describe("mdx.tag_search integration", function()
+	it("полная цепочка через подмену picker.tag_search", function()
+		local target = "/tmp/mdx-test-tag-search.md"
+
+		local picker = require("mdx.picker")
+		local original = picker.tag_search
+		picker.tag_search = function(_, on_select)
+			on_select({ path = target, title = "Foo" })
+		end
+
+		local ok, err = pcall(require("mdx").tag_search)
+		picker.tag_search = original
+		assert(ok, err)
+
+		assert.equals(target, vim.api.nvim_buf_get_name(0))
+	end)
+end)

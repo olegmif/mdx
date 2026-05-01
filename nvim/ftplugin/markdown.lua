@@ -25,3 +25,9 @@ if config.keymaps.insert_link then
 		mdx.insert_link()
 	end, { buffer = true, desc = "mdx: insert link to existing note" })
 end
+
+if config.keymaps.tag_search then
+	vim.keymap.set("n", config.keymaps.tag_search, function()
+		mdx.tag_search()
+	end, { buffer = true, desc = "mdx: search notes by tag" })
+end
