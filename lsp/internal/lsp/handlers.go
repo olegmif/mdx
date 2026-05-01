@@ -149,5 +149,22 @@ func (s *Server) onListNotes(ctx *glsp.Context) ([]db.NoteEntry, error) {
 }
 
 func (s *Server) onSearchByTags(ctx *glsp.Context, include []string, exclude []string) ([]db.NoteEntry, error) {
-	return nil, nil
+	entries, err := db.SearchByTags(s.conn, include, exclude)
+	if err != nil {
+		return nil, err
+	}
+	for i := range entries {
+		if entries[i].Title == "" {
+			entries[i].Title = strings.TrimSuffix(filepath.Base(entries[i].Path), ".md")
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		ti := strings.ToLower(entries[i].Title)
+		tj := strings.ToLower(entries[j].Title)
+		if ti != tj {
+			return ti < tj
+		}
+		return entries[i].Path < entries[j].Path
+	})
+	return entries, nil
 }

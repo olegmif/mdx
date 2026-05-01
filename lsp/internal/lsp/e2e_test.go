@@ -296,3 +296,147 @@ func TestServerListNotes(t *testing.T) {
 		t.Fatal("server did not finish")
 	}
 }
+
+func TestServerSearchByTags(t *testing.T) {
+	tmp := t.TempDir()
+	conn, err := db.Open(filepath.Join(tmp, "mdx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrate(conn); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := conn.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	notes := []db.NoteRecord{
+		{Path: "/notes/a.md", Title: "Alpha"},
+		{Path: "/notes/b.md", Title: "Beta"},
+		{Path: "/notes/c.md", Title: "Gamma"},
+	}
+	for _, n := range notes {
+		if err := db.UpsertNote(tx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.ReplaceTags(tx, "/notes/a.md", []string{"go", "mdx"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ReplaceTags(tx, "/notes/b.md", []string{"mdx"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ReplaceTags(tx, "/notes/c.md", []string{"vim"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	inR, inW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origStdin, origStdout := os.Stdin, os.Stdout
+	os.Stdin = inR
+	os.Stdout = outW
+	t.Cleanup(func() {
+		os.Stdin = origStdin
+		os.Stdout = origStdout
+	})
+
+	srv := New(conn)
+	done := make(chan error, 1)
+	go func() { done <- srv.RunStdio() }()
+
+	reader := bufio.NewReader(outR)
+	send := func(payload map[string]any) {
+		t.Helper()
+		b, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := frameWrite(inW, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	send(map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "initialize",
+		"params": map[string]any{"processId": 1, "rootUri": nil, "capabilities": map[string]any{}},
+	})
+	if _, err := frameRead(reader); err != nil {
+		t.Fatalf("initialize response: %v", err)
+	}
+	send(map[string]any{"jsonrpc": "2.0", "method": "initialized", "params": map[string]any{}})
+
+	type resp struct {
+		ID     int            `json:"id"`
+		Result []db.NoteEntry `json:"result"`
+	}
+	call := func(id int, include, exclude []string) resp {
+		t.Helper()
+		send(map[string]any{
+			"jsonrpc": "2.0", "id": id, "method": "mdx/searchByTags",
+			"params": map[string]any{"include": include, "exclude": exclude},
+		})
+		body, err := frameRead(reader)
+		if err != nil {
+			t.Fatalf("searchByTags id=%d: %v", id, err)
+		}
+		var r resp
+		if err := json.Unmarshal(body, &r); err != nil {
+			t.Fatalf("unmarshal id=%d: %v\nbody: %s", id, err, body)
+		}
+		if r.ID != id {
+			t.Errorf("ID = %d, want %d", r.ID, id)
+		}
+		return r
+	}
+
+	// 1. include=["mdx"] → a.md, b.md.
+	r1 := call(2, []string{"mdx"}, []string{})
+	if len(r1.Result) != 2 {
+		t.Fatalf("call 1: got %d entries, want 2: %+v", len(r1.Result), r1.Result)
+	}
+	if r1.Result[0] != (db.NoteEntry{Path: "/notes/a.md", Title: "Alpha"}) {
+		t.Errorf("call 1 entry[0] = %+v", r1.Result[0])
+	}
+	if r1.Result[1] != (db.NoteEntry{Path: "/notes/b.md", Title: "Beta"}) {
+		t.Errorf("call 1 entry[1] = %+v", r1.Result[1])
+	}
+
+	// 2. include=["go","mdx*"], exclude=["vim"] → только a.md (есть и go, и mdx*; нет vim).
+	r2 := call(3, []string{"go", "mdx*"}, []string{"vim"})
+	if len(r2.Result) != 1 {
+		t.Fatalf("call 2: got %d entries, want 1: %+v", len(r2.Result), r2.Result)
+	}
+	if r2.Result[0] != (db.NoteEntry{Path: "/notes/a.md", Title: "Alpha"}) {
+		t.Errorf("call 2 entry[0] = %+v", r2.Result[0])
+	}
+
+	// 3. пустые фильтры → все 3 заметки.
+	r3 := call(4, []string{}, []string{})
+	if len(r3.Result) != 3 {
+		t.Fatalf("call 3: got %d entries, want 3: %+v", len(r3.Result), r3.Result)
+	}
+
+	send(map[string]any{"jsonrpc": "2.0", "id": 99, "method": "shutdown"})
+	if _, err := frameRead(reader); err != nil {
+		t.Fatalf("shutdown response: %v", err)
+	}
+	inW.Close()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("RunStdio: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not finish")
+	}
+}

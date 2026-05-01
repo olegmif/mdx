@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // NoteRecord is one row of the notes table.
@@ -105,5 +106,54 @@ func ListNotes(db *sql.DB) ([]NoteEntry, error) {
 }
 
 func SearchByTags(db *sql.DB, include []string, exclude []string) ([]NoteEntry, error) {
-	return nil, nil
+	var sb strings.Builder
+	sb.WriteString(`SELECT path, COALESCE(title, '') AS title FROM notes`)
+
+	var conds []string
+	var args []any
+
+	for _, t := range include {
+		cond, arg := tagCondition(t)
+		conds = append(conds, fmt.Sprintf(
+			"EXISTS (SELECT 1 FROM tags WHERE path = notes.path AND %s)", cond))
+		args = append(args, arg)
+	}
+	for _, t := range exclude {
+		cond, arg := tagCondition(t)
+		conds = append(conds, fmt.Sprintf(
+			"NOT EXISTS (SELECT 1 FROM tags WHERE path = notes.path AND %s)", cond))
+		args = append(args, arg)
+	}
+
+	if len(conds) > 0 {
+		sb.WriteString(" WHERE ")
+		sb.WriteString(strings.Join(conds, " AND "))
+	}
+	sb.WriteString(` ORDER BY (COALESCE(title, '') = '') ASC, title COLLATE NOCASE, path`)
+	rows, err := db.Query(sb.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := []NoteEntry{}
+	for rows.Next() {
+		var entry NoteEntry
+		if err := rows.Scan(&entry.Path, &entry.Title); err != nil {
+			return nil, err
+		}
+		result = append(result, entry)
+	}
+	return result, rows.Err()
+}
+
+// tagCondition returns the SQL fragment and argument for a single token.
+// Парсер тегов M0 (parse.tagInBody, regex `[\w][\w/-]*`) исключает
+// `*`, `?`, `[`, `]` из реальных имён тегов — поэтому появление любого
+// из них в токене однозначно означает wildcard, и эскейп не нужен.
+func tagCondition(token string) (sqlFragment string, arg string) {
+	if strings.ContainsAny(token, "*?[") {
+		return "tag GLOB ?", token
+	}
+	return "tag = ?", token
 }

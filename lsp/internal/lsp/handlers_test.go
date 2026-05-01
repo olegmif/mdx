@@ -232,3 +232,68 @@ func TestOnListNotes(t *testing.T) {
 		}
 	}
 }
+
+func TestOnSearchByTags(t *testing.T) {
+	tmp := t.TempDir()
+	conn, err := db.Open(filepath.Join(tmp, "mdx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := db.Migrate(conn); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	notes := []db.NoteRecord{
+		{Path: "/notes/charlie.md", Title: "Alpha"},
+		{Path: "/notes/bravo.md", Title: ""}, // fallback на basename: "bravo"
+		{Path: "/notes/delta.md", Title: "Charlie"},
+		{Path: "/notes/skip.md", Title: "Excluded"}, // помечен draft, должен быть отфильтрован
+	}
+	for _, n := range notes {
+		if err := db.UpsertNote(tx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tagsByPath := map[string][]string{
+		"/notes/charlie.md": {"mdx"},
+		"/notes/bravo.md":   {"mdx"},
+		"/notes/delta.md":   {"mdx"},
+		"/notes/skip.md":    {"mdx", "draft"},
+	}
+	for path, tags := range tagsByPath {
+		if err := db.ReplaceTags(tx, path, tags); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{conn: conn}
+	got, err := s.onSearchByTags(nil, []string{"mdx"}, []string{"draft"})
+	if err != nil {
+		t.Fatalf("onSearchByTags: %v", err)
+	}
+
+	// Сортировка после fallback'а: case-insensitive по title, затем по path.
+	// "bravo" (fallback) < "Alpha"? Нет — сравниваем по lower:
+	//   alpha < bravo < charlie. Поэтому порядок такой:
+	want := []db.NoteEntry{
+		{Path: "/notes/charlie.md", Title: "Alpha"},
+		{Path: "/notes/bravo.md", Title: "bravo"},
+		{Path: "/notes/delta.md", Title: "Charlie"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d entries, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("entry[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}

@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -246,5 +247,218 @@ func TestListNotesSorted(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("entry[%d] = %+v, want %+v", i, got[i], want[i])
 		}
+	}
+}
+
+func seed(t *testing.T, conn *sql.DB, notes []NoteRecord, tagsByPath map[string][]string) {
+	t.Helper()
+	tx, err := conn.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range notes {
+		if err := UpsertNote(tx, n); err != nil {
+			t.Fatalf("UpsertNote: %v", err)
+		}
+	}
+	for path, tags := range tagsByPath {
+		if err := ReplaceTags(tx, path, tags); err != nil {
+			t.Fatalf("ReplaceTags: %v", err)
+		}
+	}
+	mustCommit(t, tx)
+}
+
+func entryPaths(entries []NoteEntry) []string {
+	out := make([]string, len(entries))
+	for i, e := range entries {
+		out[i] = e.Path
+	}
+	return out
+}
+
+func TestSearchByTagsEmptyDB(t *testing.T) {
+	conn := setupDB(t)
+
+	got, err := SearchByTags(conn, nil, nil)
+	if err != nil {
+		t.Fatalf("SearchByTags: %v", err)
+	}
+	if got == nil {
+		t.Fatal("got nil, want empty slice")
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d entries, want 0", len(got))
+	}
+}
+
+func TestSearchByTags(t *testing.T) {
+	conn := setupDB(t)
+	seed(t, conn,
+		[]NoteRecord{
+			{Path: "/n/a.md", Title: "alpha"},
+			{Path: "/n/b.md", Title: "Bravo"},
+			{Path: "/n/c.md", Title: "Charlie"},
+			{Path: "/n/d.md", Title: "delta"},
+			{Path: "/n/e.md", Title: "echo"},
+			{Path: "/n/f.md", Title: "foxtrot"},
+			{Path: "/n/tg.md", Title: "Tag/g"},
+			{Path: "/n/t1.md", Title: "tag1"},
+			{Path: "/n/t2.md", Title: "tag2"},
+		},
+		map[string][]string{
+			"/n/a.md":  {"go", "mdx"},
+			"/n/b.md":  {"mdx", "mdx-design"},
+			"/n/c.md":  {"go", "draft"},
+			"/n/d.md":  {"mdx-impl", "mdx-draft"},
+			"/n/e.md":  {"vim"},
+			"/n/tg.md": {"tag", "tog", "tug"},
+			"/n/t1.md": {"tag1"},
+			"/n/t2.md": {"tag2"},
+			// /n/f.md — без тегов
+		},
+	)
+
+	allTagged := []string{
+		"/n/a.md", "/n/b.md", "/n/c.md", "/n/d.md", "/n/e.md",
+		"/n/tg.md", "/n/t1.md", "/n/t2.md",
+	}
+	allNotes := []string{
+		"/n/a.md", "/n/b.md", "/n/c.md", "/n/d.md", "/n/e.md",
+		"/n/f.md", "/n/tg.md", "/n/t1.md", "/n/t2.md",
+	}
+
+	tests := []struct {
+		name    string
+		include []string
+		exclude []string
+		want    []string
+	}{
+		{
+			name: "empty filters → all notes, sorted by title",
+			want: allNotes,
+		},
+		{
+			name:    "single exact include",
+			include: []string{"mdx"},
+			want:    []string{"/n/a.md", "/n/b.md"},
+		},
+		{
+			name:    "AND of two exact includes",
+			include: []string{"go", "mdx"},
+			want:    []string{"/n/a.md"},
+		},
+		{
+			name:    "only exclude",
+			exclude: []string{"draft"},
+			want: []string{
+				"/n/a.md", "/n/b.md", "/n/d.md", "/n/e.md",
+				"/n/f.md", "/n/tg.md", "/n/t1.md", "/n/t2.md",
+			},
+		},
+		{
+			name:    "include + exclude",
+			include: []string{"mdx"},
+			exclude: []string{"draft"},
+			want:    []string{"/n/a.md", "/n/b.md"},
+		},
+		{
+			name:    "include nonexistent → empty",
+			include: []string{"nonexistent"},
+			want:    []string{},
+		},
+		{
+			name:    "exclude nonexistent → no narrowing",
+			exclude: []string{"nonexistent"},
+			want:    allNotes,
+		},
+		{
+			name:    "prefix wildcard",
+			include: []string{"mdx*"},
+			want:    []string{"/n/a.md", "/n/b.md", "/n/d.md"},
+		},
+		{
+			name:    "suffix wildcard",
+			include: []string{"*draft"},
+			want:    []string{"/n/c.md", "/n/d.md"},
+		},
+		{
+			name:    "substring wildcard exclude",
+			exclude: []string{"*draft*"},
+			want: []string{
+				"/n/a.md", "/n/b.md", "/n/e.md", "/n/f.md",
+				"/n/tg.md", "/n/t1.md", "/n/t2.md",
+			},
+		},
+		{
+			name:    "exact + wildcard mix",
+			include: []string{"go", "mdx*"},
+			want:    []string{"/n/a.md"},
+		},
+		{
+			name:    "lone star include → tagged only",
+			include: []string{"*"},
+			want:    allTagged,
+		},
+		{
+			name:    "lone star exclude → untagged only",
+			exclude: []string{"*"},
+			want:    []string{"/n/f.md"},
+		},
+		{
+			name:    "wildcard include + exact exclude",
+			include: []string{"mdx*"},
+			exclude: []string{"mdx-draft"},
+			want:    []string{"/n/a.md", "/n/b.md"},
+		},
+		{
+			name:    "single-char wildcard",
+			include: []string{"t?g"},
+			want:    []string{"/n/tg.md"},
+		},
+		{
+			name:    "char class",
+			include: []string{"tag[12]"},
+			want:    []string{"/n/t1.md", "/n/t2.md"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := SearchByTags(conn, tc.include, tc.exclude)
+			if err != nil {
+				t.Fatalf("SearchByTags: %v", err)
+			}
+			gotPaths := entryPaths(got)
+			if !reflect.DeepEqual(gotPaths, tc.want) {
+				t.Errorf("got  %v\nwant %v", gotPaths, tc.want)
+			}
+		})
+	}
+}
+
+func TestTagCondition(t *testing.T) {
+	tests := []struct {
+		token   string
+		wantSQL string
+	}{
+		{"mdx", "tag = ?"},
+		{"mdx-design", "tag = ?"},
+		{"mdx*", "tag GLOB ?"},
+		{"*tmp", "tag GLOB ?"},
+		{"*draft*", "tag GLOB ?"},
+		{"t?g", "tag GLOB ?"},
+		{"tag[12]", "tag GLOB ?"},
+		{"*", "tag GLOB ?"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.token, func(t *testing.T) {
+			gotSQL, gotArg := tagCondition(tc.token)
+			if gotSQL != tc.wantSQL {
+				t.Errorf("sqlFragment = %q, want %q", gotSQL, tc.wantSQL)
+			}
+			if gotArg != tc.token {
+				t.Errorf("arg = %q, want %q (token passed through unchanged)", gotArg, tc.token)
+			}
+		})
 	}
 }
