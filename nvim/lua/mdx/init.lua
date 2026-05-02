@@ -6,8 +6,16 @@ local defaults = {
 		follow_split = "<leader>ms",
 		insert_link = "<leader>mi",
 		tag_search = "<leader>mt",
+		extract = "<leader>me",
+		new_note = "<leader>mn",
+		sql = "<leader>mq",
+		query = "<leader>mr",
+		query_insert = "<leader>mR",
 	},
 	conceal = true,
+	prompt_filename = false,
+	query_dir = "~/.config/mdx/queries",
+	script_dir = "~/.config/mdx/scripts",
 }
 
 M.config = vim.deepcopy(defaults)
@@ -51,6 +59,26 @@ function M.insert_link()
 	end)
 end
 
+function M.extract()
+	require("mdx.extract").extract()
+end
+
+function M.new_note()
+	require("mdx.new").new()
+end
+
+function M.sql()
+	require("mdx.sql").open(M.config)
+end
+
+function M.query()
+	require("mdx.script").query(M.config)
+end
+
+function M.query_insert()
+	require("mdx.script").query_insert(M.config)
+end
+
 function M.setup(opts)
 	M.config = vim.tbl_deep_extend("force", defaults, opts or {})
 	vim.api.nvim_create_user_command("MdxFollow", M.follow, {})
@@ -60,6 +88,21 @@ function M.setup(opts)
 	end, {})
 	vim.api.nvim_create_user_command("MdxTagSearch", function()
 		require("mdx").tag_search()
+	end, {})
+	vim.api.nvim_create_user_command("MdxExtract", function()
+		require("mdx").extract()
+	end, { range = true })
+	vim.api.nvim_create_user_command("MdxNew", function()
+		require("mdx").new_note()
+	end, {})
+	vim.api.nvim_create_user_command("MdxSql", function()
+		require("mdx").sql()
+	end, {})
+	vim.api.nvim_create_user_command("MdxQuery", function()
+		require("mdx").query()
+	end, {})
+	vim.api.nvim_create_user_command("MdxQueryInsert", function()
+		require("mdx").query_insert()
 	end, {})
 end
 

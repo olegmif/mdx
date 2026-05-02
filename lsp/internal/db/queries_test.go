@@ -436,6 +436,117 @@ func TestSearchByTags(t *testing.T) {
 	}
 }
 
+func TestQueryValidationRejectsNonSelect(t *testing.T) {
+	conn := setupDB(t)
+
+	cases := []string{
+		"INSERT INTO notes(path) VALUES('x')",
+		"DELETE FROM notes",
+		"UPDATE notes SET title='x'",
+		"DROP TABLE notes",
+		"CREATE TABLE x(y INT)",
+		"PRAGMA query_only = OFF",
+		"   ",
+		"",
+	}
+	for _, q := range cases {
+		t.Run(q, func(t *testing.T) {
+			_, err := Query(conn, q, nil)
+			if err == nil {
+				t.Fatalf("expected error for %q, got nil", q)
+			}
+		})
+	}
+}
+
+func TestQueryValidationAcceptsSelectAndWith(t *testing.T) {
+	conn := setupDB(t)
+
+	cases := []string{
+		"SELECT 1",
+		"  select 1",
+		"-- comment\nSELECT 1",
+		"/* block */ SELECT 1",
+		"WITH x AS (SELECT 1) SELECT * FROM x",
+	}
+	for _, q := range cases {
+		t.Run(q, func(t *testing.T) {
+			_, err := Query(conn, q, nil)
+			if err != nil {
+				t.Fatalf("expected ok for %q, got %v", q, err)
+			}
+		})
+	}
+}
+
+func TestQueryReturnsRowsAsMaps(t *testing.T) {
+	conn := setupDB(t)
+	seed(t, conn,
+		[]NoteRecord{
+			{Path: "/a.md", Title: "Alpha", Frontmatter: `{"type":"task","priority":1}`},
+			{Path: "/b.md", Title: "Bravo", Frontmatter: `{"type":"note"}`},
+			{Path: "/c.md", Title: "Charlie", Frontmatter: `{"type":"task"}`},
+		},
+		nil,
+	)
+
+	got, err := Query(conn,
+		`SELECT path, COALESCE(title, '') AS title
+		 FROM notes
+		 WHERE json_extract(frontmatter, '$.type') = ?
+		 ORDER BY path`,
+		[]any{"task"},
+	)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d rows, want 2: %+v", len(got), got)
+	}
+	if got[0]["path"] != "/a.md" || got[0]["title"] != "Alpha" {
+		t.Errorf("row 0 = %+v", got[0])
+	}
+	if got[1]["path"] != "/c.md" || got[1]["title"] != "Charlie" {
+		t.Errorf("row 1 = %+v", got[1])
+	}
+}
+
+func TestQueryEmptyResultIsEmptySlice(t *testing.T) {
+	conn := setupDB(t)
+	got, err := Query(conn, "SELECT path FROM notes WHERE path = ?", []any{"/nope"})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if got == nil {
+		t.Fatal("got nil, want []")
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d rows, want 0", len(got))
+	}
+}
+
+func TestStripSQLComments(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"SELECT 1", "SELECT 1"},
+		{"-- hi\nSELECT 1", "\nSELECT 1"},
+		{"SELECT 1 -- trailing", "SELECT 1 "},
+		{"/* block */ SELECT 1", " SELECT 1"},
+		{"SELECT /* mid */ 1", "SELECT  1"},
+		{"/* unclosed", ""},
+		{"/* a */ /* b */ SELECT 1", "  SELECT 1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			got := stripSQLComments(tc.in)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestTagCondition(t *testing.T) {
 	tests := []struct {
 		token   string

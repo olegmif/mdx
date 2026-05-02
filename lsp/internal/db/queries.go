@@ -157,3 +157,96 @@ func tagCondition(token string) (sqlFragment string, arg string) {
 	}
 	return "tag = ?", token
 }
+
+// Query выполняет произвольный пользовательский SQL-запрос и возвращает
+// строки в виде []map[column]value. Допускаются только SELECT- и
+// WITH-запросы — попытка INSERT/UPDATE/DELETE/DROP и прочей DDL/DML
+// отклоняется до выполнения.
+//
+// Возвращаемые значения соответствуют типам SQLite: int64, float64,
+// string, nil. BLOB-столбцы конвертируются в string.
+func Query(conn *sql.DB, sqlStr string, args []any) ([]map[string]any, error) {
+	if err := validateSelectOnly(sqlStr); err != nil {
+		return nil, err
+	}
+
+	rows, err := conn.Query(sqlStr, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query: %w", err)
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("columns: %w", err)
+	}
+
+	result := []map[string]any{}
+	for rows.Next() {
+		values := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range values {
+			ptrs[i] = &values[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		row := make(map[string]any, len(cols))
+		for i, col := range cols {
+			v := values[i]
+			if b, ok := v.([]byte); ok {
+				v = string(b)
+			}
+			row[col] = v
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return result, nil
+}
+
+// validateSelectOnly проверяет, что SQL начинается с SELECT или WITH
+// после удаления комментариев и whitespace. Дополнительный пояс
+// безопасности на случай, если первый кейворд получится обмануть —
+// здесь ровно один: «начинается с правильного слова».
+func validateSelectOnly(sqlStr string) error {
+	s := stripSQLComments(sqlStr)
+	s = strings.TrimSpace(s)
+	upper := strings.ToUpper(s)
+	if strings.HasPrefix(upper, "SELECT") || strings.HasPrefix(upper, "WITH") {
+		return nil
+	}
+	return fmt.Errorf("only SELECT/WITH queries are allowed")
+}
+
+// stripSQLComments удаляет /* ... */ и -- комментарии. Не строгий парсер
+// SQL — комментарии внутри строковых литералов он тоже «вычистит», но
+// для нашей цели (определить первый кейворд) это безопасно: первый
+// кейворд не может быть внутри литерала.
+func stripSQLComments(sqlStr string) string {
+	// Блок-комментарии /* ... */
+	for {
+		start := strings.Index(sqlStr, "/*")
+		if start < 0 {
+			break
+		}
+		rest := sqlStr[start:]
+		end := strings.Index(rest, "*/")
+		if end < 0 {
+			sqlStr = sqlStr[:start]
+			break
+		}
+		sqlStr = sqlStr[:start] + sqlStr[start+end+2:]
+	}
+	// Строчные комментарии -- ...
+	var out []string
+	for line := range strings.SplitSeq(sqlStr, "\n") {
+		if idx := strings.Index(line, "--"); idx >= 0 {
+			line = line[:idx]
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}

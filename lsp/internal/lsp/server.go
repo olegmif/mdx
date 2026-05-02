@@ -39,6 +39,16 @@ func (h *mdxHandler) Handle(ctx *glsp.Context) (any, bool, bool, error) {
 		}
 		result, err := h.server.onSearchByTags(ctx, p.Include, p.Exclude)
 		return result, true, true, err
+	case "mdx/query":
+		var p struct {
+			SQL  string `json:"sql"`
+			Args []any  `json:"args"`
+		}
+		if err := json.Unmarshal(ctx.Params, &p); err != nil {
+			return nil, true, true, err
+		}
+		result, err := h.server.onQuery(ctx, p.SQL, p.Args)
+		return result, true, true, err
 	default:
 		return h.base.Handle(ctx)
 	}

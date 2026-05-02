@@ -168,3 +168,7 @@ func (s *Server) onSearchByTags(ctx *glsp.Context, include []string, exclude []s
 	})
 	return entries, nil
 }
+
+func (s *Server) onQuery(ctx *glsp.Context, sqlStr string, args []any) ([]map[string]any, error) {
+	return db.Query(s.conn, sqlStr, args)
+}

@@ -31,3 +31,36 @@ if config.keymaps.tag_search then
 		mdx.tag_search()
 	end, { buffer = true, desc = "mdx: search notes by tag" })
 end
+
+if config.keymaps.extract then
+	-- :<C-u> сбрасывает auto-вставленный '<,'> в командной строке;
+	-- к моменту запуска MdxExtract метки '< и '> уже выставлены.
+	vim.keymap.set("x", config.keymaps.extract, ":<C-u>MdxExtract<CR>", {
+		buffer = true,
+		desc = "mdx: extract selection to new note",
+	})
+end
+
+if config.keymaps.new_note then
+	vim.keymap.set("n", config.keymaps.new_note, function()
+		mdx.new_note()
+	end, { buffer = true, desc = "mdx: create new note" })
+end
+
+if config.keymaps.sql then
+	vim.keymap.set("n", config.keymaps.sql, function()
+		mdx.sql()
+	end, { buffer = true, desc = "mdx: run saved sql query" })
+end
+
+if config.keymaps.query then
+	vim.keymap.set("n", config.keymaps.query, function()
+		mdx.query()
+	end, { buffer = true, desc = "mdx: run saved lua script (show)" })
+end
+
+if config.keymaps.query_insert then
+	vim.keymap.set("n", config.keymaps.query_insert, function()
+		mdx.query_insert()
+	end, { buffer = true, desc = "mdx: run saved lua script (insert)" })
+end
