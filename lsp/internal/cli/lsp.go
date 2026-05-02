@@ -10,7 +10,7 @@ import (
 	"github.com/olegmif/mdx/lsp/internal/lsp"
 )
 
-func RunLSP(ctx context.Context, conn *sql.DB, dbPath, logPath string) error {
+func RunLSP(ctx context.Context, conn *sql.DB, dbPath, logPath string, ignore []string) error {
 	if err := lsp.Init(logPath); err != nil {
 		return err
 	}
@@ -19,7 +19,8 @@ func RunLSP(ctx context.Context, conn *sql.DB, dbPath, logPath string) error {
 	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
 		version = info.Main.Version
 	}
-	slog.Info("server starting", "version", version, "db", dbPath, "log", logPath)
+	slog.Info("server starting",
+		"version", version, "db", dbPath, "log", logPath, "ignore_count", len(ignore))
 
 	go func() {
 		<-ctx.Done()
@@ -30,6 +31,6 @@ func RunLSP(ctx context.Context, conn *sql.DB, dbPath, logPath string) error {
 		os.Exit(0)
 	}()
 
-	srv := lsp.New(conn)
+	srv := lsp.New(conn, ignore)
 	return srv.RunStdio()
 }

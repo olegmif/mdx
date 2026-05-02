@@ -28,14 +28,16 @@ var DefaultExcludes = []string{
 }
 
 // RunScan scans every root, parsing each .md file and persisting metadata,
-// outgoing links, and tags into the database. Per-file errors are reported
-// to stderr and counted; they do not abort the run.
-func RunScan(ctx context.Context, conn *sql.DB, roots, excludes []string) (Stats, error) {
+// outgoing links, and tags into the database. Directories whose base name
+// matches excludes are skipped; paths that fall under any prefix in
+// ignorePrefixes are skipped as well. Per-file errors are reported to
+// stderr and counted; they do not abort the run.
+func RunScan(ctx context.Context, conn *sql.DB, roots, excludes, ignorePrefixes []string) (Stats, error) {
 	start := time.Now()
 	var stats Stats
 
 	for _, root := range roots {
-		err := scan.Walk(root, excludes, func(path string, info fs.FileInfo) error {
+		err := scan.Walk(root, excludes, ignorePrefixes, func(path string, info fs.FileInfo) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}

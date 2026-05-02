@@ -106,6 +106,97 @@ func TestOnDidOpen(t *testing.T) {
 	}
 }
 
+func TestOnDidOpenIgnored(t *testing.T) {
+	tmp := t.TempDir()
+	mdPath := filepath.Join(tmp, "test.md")
+	content := "# Test\n[broken](./nope.md)\n"
+	if err := os.WriteFile(mdPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(filepath.Join(tmp, "mdx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := db.Migrate(conn); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls int
+	ctx := &glsp.Context{
+		Notify: func(method string, params any) {
+			calls++
+		},
+	}
+
+	// tmp itself is the ignore prefix — mdPath sits under it.
+	s := &Server{conn: conn, ignore: []string{tmp}}
+	if err := s.onDidOpen(ctx, &protocol.DidOpenTextDocumentParams{
+		TextDocument: protocol.TextDocumentItem{
+			URI:  protocol.DocumentUri(PathToURI(mdPath)),
+			Text: content,
+		},
+	}); err != nil {
+		t.Fatalf("onDidOpen: %v", err)
+	}
+
+	var n int
+	if err := conn.QueryRow(`SELECT COUNT(*) FROM notes WHERE path = ?`, mdPath).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("notes for %s = %d, want 0 (ignored)", mdPath, n)
+	}
+	if calls != 0 {
+		t.Errorf("notifications = %d, want 0 (ignored: no publishDiagnostics)", calls)
+	}
+}
+
+func TestOnDidSaveIgnored(t *testing.T) {
+	tmp := t.TempDir()
+	mdPath := filepath.Join(tmp, "test.md")
+	if err := os.WriteFile(mdPath, []byte("# v1\n[broken](./nope.md)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(filepath.Join(tmp, "mdx.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := db.Migrate(conn); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls int
+	ctx := &glsp.Context{
+		Notify: func(method string, params any) {
+			calls++
+		},
+	}
+
+	s := &Server{conn: conn, ignore: []string{tmp}}
+	if err := s.onDidSave(ctx, &protocol.DidSaveTextDocumentParams{
+		TextDocument: protocol.TextDocumentIdentifier{
+			URI: protocol.DocumentUri(PathToURI(mdPath)),
+		},
+	}); err != nil {
+		t.Fatalf("onDidSave: %v", err)
+	}
+
+	var n int
+	if err := conn.QueryRow(`SELECT COUNT(*) FROM notes WHERE path = ?`, mdPath).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("notes for %s = %d, want 0 (ignored)", mdPath, n)
+	}
+	if calls != 0 {
+		t.Errorf("notifications = %d, want 0 (ignored)", calls)
+	}
+}
+
 func TestOnDidSave(t *testing.T) {
 	tmp := t.TempDir()
 	mdPath := filepath.Join(tmp, "test.md")

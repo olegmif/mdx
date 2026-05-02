@@ -26,6 +26,9 @@ With no arguments, scans `$HOME`. Multiple roots can be passed.
 Flags:
 
 - `--db PATH` — override database location.
+- `--ignore PATH` — override ignore-file location (default: `$XDG_CONFIG_HOME/mdx/ignore`,
+  fallback `~/.config/mdx/ignore`; can also be set via `MDX_IGNORE`). See
+  [Ignore file](#ignore-file) below.
 - `--exclude NAME` — additional directory base names to skip (in addition to
   the built-in list: `.git`, `node_modules`, `.venv`, `target`, `.cache`,
   `dist`, `build`, `vendor`). Repeatable or comma-separated.
@@ -38,6 +41,71 @@ scanned: N, errors: M, elapsed: T
 ```
 
 Per-file errors are written to stderr but never abort the run.
+
+### Ignore file
+
+Plain text, one path per line. Blank lines and lines starting with `#` are
+ignored. Each path is either absolute (`/var/log`) or starts with `~`/`~/`
+(expanded against the current user's home directory). Relative paths are
+rejected with a warning to stderr.
+
+Match semantics: prefix on the normalized absolute path. A file is skipped
+when its path equals an entry exactly or is a strict subtree (path begins
+with `<entry>` followed by the path separator). String-prefix collisions
+(`/foo/barbaz` against entry `/foo/bar`) are not matched.
+
+Effect on `mdx scan`: the walker does not descend into ignored directories
+and does not feed ignored files into the indexing pipeline.
+
+Effect on `mdx lsp`: `textDocument/didOpen` and `textDocument/didSave` for
+files under an ignored prefix return early — no upsert, no diagnostics
+published. The check happens after URI→path conversion, so opening such a
+file in the editor is silent. The ignore file is read once at server
+startup; restart `mdx lsp` to pick up edits.
+
+Already-indexed records under ignored prefixes are **not** removed by
+`scan` or by `lsp`; run `mdx gc` to drop them (see
+[Garbage-collect orphan rows](#garbage-collect-orphan-rows)).
+
+Example `~/.config/mdx/ignore`:
+
+```
+# transient state, never indexed
+~/.local/state
+/var/log
+```
+
+## Garbage-collect orphan rows
+
+```
+./bin/mdx gc
+```
+
+Iterates over every `notes` row in the database. For each row it checks
+two conditions:
+
+- the file referenced by `path` no longer exists on disk;
+- the path falls under a prefix in `~/.config/mdx/ignore`.
+
+Rows that meet either condition are deleted. Foreign-key `ON DELETE
+CASCADE` drops the associated `links` (where the deleted note is the
+source) and `tags` rows. Incoming links — rows in `links` whose
+`target_path` points at the deleted note — are kept; they correctly
+represent broken links in surviving notes.
+
+`gc` takes no path arguments and has no notion of "scan roots" or
+excluded directory names: a file that exists on disk and is not under an
+ignore prefix is kept, regardless of where it lives. Stat errors other
+than "file not found" (typically permission issues) are reported to
+stderr and the row is preserved.
+
+Flags: `--db`, `--ignore`, `-q`.
+
+The summary line:
+
+```
+removed: N, kept: M, elapsed: T
+```
 
 ## Run LSP server
 
@@ -52,6 +120,9 @@ Flags:
 
 - `--db PATH` — override database location (shared with `scan`).
 - `--log PATH` — override log file location.
+- `--ignore PATH` — override ignore-file location (default: `$XDG_CONFIG_HOME/mdx/ignore`,
+  fallback `~/.config/mdx/ignore`; can also be set via `MDX_IGNORE`). Files
+  under an ignored prefix are skipped on `didOpen`/`didSave`.
 
 Default log path:
 
@@ -63,7 +134,8 @@ Set `MDX_LOG=debug` to raise the log level from `INFO` to `DEBUG`.
 The server reacts to `textDocument/didOpen` and `textDocument/didSave`:
 each event re-indexes the file (writing to the same SQLite database that
 `mdx scan` uses) and publishes diagnostics for broken links — links whose
-target file does not exist on disk. The server does not react to
+target file does not exist on disk. Files under a prefix listed in the
+ignore file are skipped silently. The server does not react to
 `didChange`; the database stays in sync only at open and save. For bulk
 indexing of files outside the editor, run `mdx scan`.
 
@@ -126,6 +198,7 @@ resulting database contents.
 ```
 cmd/mdx/          entry point and cobra wiring
 internal/cli/     scan and LSP command runners
+internal/config/  user-level config: ignore file
 internal/db/      SQLite open, migrations, queries
 internal/index/   per-file indexing (used by scan and by LSP handlers)
 internal/lsp/     LSP server: handlers, diagnostics, URI helpers

@@ -4,12 +4,16 @@ package scan
 import (
 	"io/fs"
 	"path/filepath"
+
+	"github.com/olegmif/mdx/lsp/internal/config"
 )
 
 // Walk traverses root and calls fn for every regular file whose name ends
 // in ".md". Directories whose base name appears in excludes are skipped
-// entirely (the walker does not descend into them).
-func Walk(root string, excludes []string, fn func(path string, info fs.FileInfo) error) error {
+// entirely. Directories and files whose absolute path falls under any
+// prefix in ignorePrefixes are also skipped (the walker does not descend
+// into matching directories).
+func Walk(root string, excludes []string, ignorePrefixes []string, fn func(path string, info fs.FileInfo) error) error {
 	excludeSet := make(map[string]struct{}, len(excludes))
 	for _, e := range excludes {
 		excludeSet[e] = struct{}{}
@@ -27,10 +31,16 @@ func Walk(root string, excludes []string, fn func(path string, info fs.FileInfo)
 			if _, skip := excludeSet[d.Name()]; skip {
 				return fs.SkipDir
 			}
+			if config.IsIgnored(path, ignorePrefixes) {
+				return fs.SkipDir
+			}
 			return nil
 		}
 
 		if filepath.Ext(d.Name()) != ".md" {
+			return nil
+		}
+		if config.IsIgnored(path, ignorePrefixes) {
 			return nil
 		}
 

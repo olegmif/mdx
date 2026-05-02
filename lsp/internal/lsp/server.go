@@ -13,6 +13,7 @@ import (
 
 type Server struct {
 	conn     *sql.DB
+	ignore   []string
 	shutdown atomic.Bool
 	mu       sync.Mutex
 }
@@ -54,8 +55,8 @@ func (h *mdxHandler) Handle(ctx *glsp.Context) (any, bool, bool, error) {
 	}
 }
 
-func New(conn *sql.DB) *server.Server {
-	s := &Server{conn: conn}
+func New(conn *sql.DB, ignore []string) *server.Server {
+	s := &Server{conn: conn, ignore: ignore}
 	base := &protocol.Handler{
 		Initialize:          s.onInitialize,
 		Initialized:         s.onInitialized,

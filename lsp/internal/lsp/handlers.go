@@ -12,6 +12,7 @@ import (
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 
+	"github.com/olegmif/mdx/lsp/internal/config"
 	"github.com/olegmif/mdx/lsp/internal/db"
 	"github.com/olegmif/mdx/lsp/internal/index"
 )
@@ -73,6 +74,10 @@ func (s *Server) onDidOpen(ctx *glsp.Context, params *protocol.DidOpenTextDocume
 		slog.Error("didOpen: uri", "uri", uri, "err", err)
 		return nil
 	}
+	if config.IsIgnored(path, s.ignore) {
+		slog.Debug("path ignored", "event", "didOpen", "path", path)
+		return nil
+	}
 	slog.Info("didOpen", "path", path)
 
 	s.mu.Lock()
@@ -104,6 +109,10 @@ func (s *Server) onDidSave(ctx *glsp.Context, params *protocol.DidSaveTextDocume
 	path, err := URIToPath(uri)
 	if err != nil {
 		slog.Error("didSave: uri", "uri", uri, "err", err)
+		return nil
+	}
+	if config.IsIgnored(path, s.ignore) {
+		slog.Debug("path ignored", "event", "didSave", "path", path)
 		return nil
 	}
 	slog.Info("didSave", "path", path)

@@ -82,7 +82,7 @@ func TestServerRoundTrip(t *testing.T) {
 		os.Stdout = origStdout
 	})
 
-	srv := New(conn)
+	srv := New(conn, nil)
 	done := make(chan error, 1)
 	go func() {
 		done <- srv.RunStdio()
@@ -230,7 +230,7 @@ func TestServerListNotes(t *testing.T) {
 		os.Stdout = origStdout
 	})
 
-	srv := New(conn)
+	srv := New(conn, nil)
 	done := make(chan error, 1)
 	go func() { done <- srv.RunStdio() }()
 
@@ -349,7 +349,7 @@ func TestServerSearchByTags(t *testing.T) {
 		os.Stdout = origStdout
 	})
 
-	srv := New(conn)
+	srv := New(conn, nil)
 	done := make(chan error, 1)
 	go func() { done <- srv.RunStdio() }()
 
