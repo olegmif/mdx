@@ -56,8 +56,33 @@ function M.invoke(query, on_done)
 	end))
 end
 
+local function show(query)
+	M.invoke(query, function(hits, err)
+		if err then
+			vim.notify("mdx: " .. err, vim.log.levels.ERROR)
+			return
+		end
+		if #hits == 0 then
+			vim.notify("mdx: no results", vim.log.levels.INFO)
+			return
+		end
+		require("mdx.picker").search_results(hits, function(hit)
+			vim.cmd.edit(vim.fn.fnameescape(hit.path))
+		end)
+	end)
+end
+
 function M.run(query)
-	vim.notify("mdx: search not implemented", vim.log.levels.INFO)
+	if query and query ~= "" then
+		show(query)
+		return
+	end
+	vim.ui.input({ prompt = "MdxSearch: " }, function(input)
+		if not input or input == "" then
+			return
+		end
+		show(input)
+	end)
 end
 
 return M
