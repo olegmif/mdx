@@ -320,12 +320,19 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	return printSearchHits(hits, flagSearchFormat)
 }
 
-// printSearchHits is a temporary text-only printer; Step 5 of M1_embeddings
-// replaces it with FormatText/FormatJSON dispatch on flagSearchFormat.
 func printSearchHits(hits []cli.SearchHit, format string) error {
-	_ = format
-	for _, h := range hits {
-		fmt.Println(h.Path)
+	switch format {
+	case "text":
+		_, err := os.Stdout.WriteString(cli.FormatText(hits))
+		return err
+	case "json":
+		data, err := cli.FormatJSON(hits)
+		if err != nil {
+			return err
+		}
+		_, err = os.Stdout.Write(append(data, '\n'))
+		return err
+	default:
+		return fmt.Errorf("unknown --format %q (text|json)", format)
 	}
-	return nil
 }

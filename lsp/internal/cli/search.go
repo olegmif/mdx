@@ -2,9 +2,11 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/olegmif/mdx/lsp/internal/config"
 	"github.com/olegmif/mdx/lsp/internal/embed"
@@ -83,6 +85,28 @@ func payloadString(p map[string]any, key string) string {
 		}
 	}
 	return ""
+}
+
+// FormatText renders hits as one path per line, terminated by \n. An empty
+// or nil slice renders to "" — printing it produces no output, which is
+// what shell pipelines (xargs/fzf/vim) want for an empty result.
+func FormatText(hits []SearchHit) string {
+	var b strings.Builder
+	for _, h := range hits {
+		b.WriteString(h.Path)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// FormatJSON renders hits as a JSON array of {path,score,title?} objects.
+// A nil slice is normalised to [] so the output is never the literal "null".
+// The trailing newline is added by the caller.
+func FormatJSON(hits []SearchHit) ([]byte, error) {
+	if hits == nil {
+		hits = []SearchHit{}
+	}
+	return json.Marshal(hits)
 }
 
 // selectSearchModel picks one model from cfg according to the M1 rules:
