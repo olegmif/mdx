@@ -6,8 +6,8 @@ outgoing links, tags) into a SQLite database.
 
 For the project rationale and architecture see `../docs/strategy.md`. For
 milestone breakdowns see `../docs/m0.md` and `../docs/m1.md`. For the
-embeddings/semantic-search subsystem see `../docs/embeddings.md` and
-`../docs/M0_embeddings.md`.
+embeddings/semantic-search subsystem see `../docs/embeddings.md`,
+`../docs/M0_embeddings.md` and `../docs/M1_embeddings.md`.
 
 ## Build
 
@@ -190,6 +190,53 @@ counted in `failed`; they do not abort the run.
 - A note longer than the model's context window is not chunked and is
   passed verbatim; truncation is the model's responsibility.
 
+## Search the corpus
+
+```
+./bin/mdx search <query>...
+```
+
+Embeds the query with the same model that produced the indexed vectors
+(applying the model's `query_prefix`), runs k-NN against Qdrant, and
+prints matching note paths sorted by descending score. Multiple
+positional arguments are joined with a single space, so quoting is
+optional:
+
+```
+./bin/mdx search qdrant configuration
+./bin/mdx search "qdrant configuration"
+./bin/mdx search --format json --limit 3 "embeddings strategy" | jq '.[0]'
+```
+
+Preconditions:
+
+1. `mdx embed` has been run at least once for the chosen model, so the
+   Qdrant collection exists and contains points. Searching against an
+   absent collection returns a clear HTTP error from Qdrant.
+2. The same Qdrant instance and embedding server used by `mdx embed`
+   are reachable. `mdx search` does not touch SQLite.
+
+### Flags
+
+- `--db PATH` — inherited from `scan`/`embed`; ignored by `search`
+  (kept for flag uniformity across subcommands).
+- `--embedding-config PATH` — override embedding config location.
+- `--model NAME` — pick a specific model from the config. When omitted,
+  the model marked `default_for_search: true` is used; if there is only
+  one model in the config, that one is used regardless of the flag.
+  A config with multiple models and no `default_for_search` is rejected
+  by `LoadEmbedding` before search runs, so this branch is unreachable
+  with a valid config.
+- `--limit N` — maximum number of results (default `20`).
+- `--format text|json` — output format (default `text`). `text` writes
+  one path per line and nothing else, suited for `xargs`/`fzf`/`vim`
+  pipelines. `json` writes a single array of `{path, score, title}`
+  objects; `title` is omitted for notes without a `title:` field in
+  frontmatter. An unknown value is rejected with an error.
+
+An empty result is an empty stdout for `text` or `[]` for `json`; this
+is not an error, so pipelines stay well-behaved.
+
 ## Run LSP server
 
 ```
@@ -282,7 +329,7 @@ resulting database contents.
 
 ```
 cmd/mdx/          entry point and cobra wiring
-internal/cli/     scan / gc / lsp / embed command runners
+internal/cli/     scan / gc / lsp / embed / search command runners
 internal/config/  user-level config: ignore file, embedding.yaml
 internal/db/      SQLite open, migrations, queries (incl. embeddings table)
 internal/embed/   embedding API client, Qdrant client, point id (UUID v5)
