@@ -295,6 +295,26 @@ func (q *QdrantClient) Upsert(ctx context.Context, collection string, points []P
 		fmt.Sprintf("upsert into %q", collection))
 }
 
+type deletePointsRequest struct {
+	Points []string `json:"points"`
+}
+
+// DeletePoints удаляет точки коллекции по их id. wait=true гарантирует,
+// что вызывающий код может полагаться на новое состояние коллекции
+// сразу после возврата. Пустой ids — no-op без обращения к серверу.
+func (q *QdrantClient) DeletePoints(ctx context.Context, collection string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	body, err := json.Marshal(deletePointsRequest{Points: ids})
+	if err != nil {
+		return fmt.Errorf("qdrant: marshal delete %q: %w", collection, err)
+	}
+	return q.doJSON(ctx, http.MethodPost,
+		"/collections/"+collection+"/points/delete?wait=true", body,
+		fmt.Sprintf("delete from %q", collection))
+}
+
 // doJSON отправляет body как JSON, проверяет 2xx и опциональный
 // `status: "ok"` в ответе. Тело ответа в успешном случае не возвращается:
 // все вызовы M0 либо ack-only (создание/upsert), либо имеют отдельный

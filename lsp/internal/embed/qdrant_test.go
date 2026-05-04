@@ -415,6 +415,66 @@ func TestQdrantSearchHTTPError(t *testing.T) {
 	}
 }
 
+func TestQdrantDeletePoints(t *testing.T) {
+	var seenURL *url.URL
+	var seenBody deletePointsRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenURL = r.URL
+		if err := json.NewDecoder(r.Body).Decode(&seenBody); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"result":{},"status":"ok"}`)
+	}))
+	defer srv.Close()
+
+	ids := []string{
+		"00000000-0000-0000-0000-000000000001",
+		"00000000-0000-0000-0000-000000000002",
+	}
+	if err := NewQdrantClient(srv.URL).DeletePoints(context.Background(), "mdx", ids); err != nil {
+		t.Fatalf("DeletePoints: %v", err)
+	}
+	if seenURL.Path != "/collections/mdx/points/delete" {
+		t.Errorf("path = %s, want /collections/mdx/points/delete", seenURL.Path)
+	}
+	if got := seenURL.Query().Get("wait"); got != "true" {
+		t.Errorf("wait = %q, want true", got)
+	}
+	if len(seenBody.Points) != 2 || seenBody.Points[0] != ids[0] || seenBody.Points[1] != ids[1] {
+		t.Errorf("body.points = %v, want %v", seenBody.Points, ids)
+	}
+}
+
+func TestQdrantDeletePointsEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("DeletePoints with empty ids should not call the server")
+	}))
+	defer srv.Close()
+
+	if err := NewQdrantClient(srv.URL).DeletePoints(context.Background(), "mdx", nil); err != nil {
+		t.Fatalf("DeletePoints(nil): %v", err)
+	}
+	if err := NewQdrantClient(srv.URL).DeletePoints(context.Background(), "mdx", []string{}); err != nil {
+		t.Fatalf("DeletePoints([]): %v", err)
+	}
+}
+
+func TestQdrantDeletePointsHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	err := NewQdrantClient(srv.URL).DeletePoints(context.Background(), "mdx", []string{"x"})
+	if err == nil {
+		t.Fatal("DeletePoints: want error")
+	}
+	if !strings.Contains(err.Error(), "mdx") || !strings.Contains(err.Error(), "500") {
+		t.Errorf("err = %q, want substrings [mdx, 500]", err.Error())
+	}
+}
+
 func TestQdrantUpsertHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusBadGateway)
