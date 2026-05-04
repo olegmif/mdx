@@ -7,6 +7,31 @@ import (
 	"github.com/olegmif/mdx/lsp/internal/config"
 )
 
+func TestPayloadString(t *testing.T) {
+	p := map[string]any{
+		"path":  "notes/foo.md",
+		"title": "Foo",
+		"mtime": int64(1700000000),
+	}
+	cases := []struct {
+		key  string
+		want string
+	}{
+		{"path", "notes/foo.md"},
+		{"title", "Foo"},
+		{"mtime", ""},   // non-string value → empty
+		{"missing", ""}, // missing key → empty
+	}
+	for _, tc := range cases {
+		if got := payloadString(p, tc.key); got != tc.want {
+			t.Fatalf("payloadString(p, %q): got %q, want %q", tc.key, got, tc.want)
+		}
+	}
+	if got := payloadString(nil, "path"); got != "" {
+		t.Fatalf("payloadString(nil, ...): got %q, want empty", got)
+	}
+}
+
 func TestSelectSearchModel(t *testing.T) {
 	m1 := config.ModelConfig{Name: "m1"}
 	m2default := config.ModelConfig{Name: "m2", DefaultForSearch: true}

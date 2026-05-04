@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -292,5 +293,39 @@ func runEmbed(cmd *cobra.Command, args []string) error {
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
-	return fmt.Errorf("search: not implemented")
+	cfgPath, err := config.ResolveEmbeddingPath(flagEmbedConfig)
+	if err != nil {
+		return err
+	}
+	cfg, warnings, err := config.LoadEmbedding(cfgPath)
+	if err != nil {
+		return fmt.Errorf("embedding config (%s): %w", cfgPath, err)
+	}
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "mdx: embedding: %s\n", w)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	query := strings.Join(args, " ")
+	hits, err := cli.RunSearch(ctx, cfg, query, cli.SearchOptions{
+		Model: flagSearchModel,
+		Limit: flagSearchLimit,
+	})
+	if err != nil {
+		return err
+	}
+
+	return printSearchHits(hits, flagSearchFormat)
+}
+
+// printSearchHits is a temporary text-only printer; Step 5 of M1_embeddings
+// replaces it with FormatText/FormatJSON dispatch on flagSearchFormat.
+func printSearchHits(hits []cli.SearchHit, format string) error {
+	_ = format
+	for _, h := range hits {
+		fmt.Println(h.Path)
+	}
+	return nil
 }

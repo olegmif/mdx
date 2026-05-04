@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/olegmif/mdx/lsp/internal/config"
+	"github.com/olegmif/mdx/lsp/internal/embed"
 )
 
 // SearchOptions collects flags driving a single mdx search call.
@@ -23,9 +25,64 @@ type SearchHit struct {
 	Title string  `json:"title,omitempty"`
 }
 
-// RunSearch is filled in by Step 4 of M1_embeddings.
+const defaultSearchLimit = 20
+
+// RunSearch resolves the search model, embeds the query (with the model's
+// QueryPrefix applied), runs k-NN against Qdrant and returns the hits in
+// the order Qdrant produced them. Points whose payload lacks "path" are
+// skipped with a stderr warning — they signal a desynchronised collection
+// and are useless to the caller.
 func RunSearch(ctx context.Context, cfg config.EmbeddingConfig, query string, opts SearchOptions) ([]SearchHit, error) {
-	return nil, errors.New("search: not implemented")
+	model, err := selectSearchModel(cfg, opts.Model)
+	if err != nil {
+		return nil, err
+	}
+
+	client := embed.NewModelClient(model)
+	vectors, err := client.Embed(ctx, []string{query}, model.QueryPrefix)
+	if err != nil {
+		return nil, err
+	}
+	if len(vectors) != 1 {
+		return nil, fmt.Errorf("model %q: got %d vectors for 1 query", model.Name, len(vectors))
+	}
+
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = defaultSearchLimit
+	}
+
+	qd := embed.NewQdrantClient(cfg.QdrantURL)
+	raw, err := qd.Search(ctx, cfg.Collection, model.Name, vectors[0], limit)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]SearchHit, 0, len(raw))
+	for _, h := range raw {
+		path := payloadString(h.Payload, "path")
+		if path == "" {
+			fmt.Fprintf(os.Stderr, "mdx: search: point %s has no path in payload, skipped\n", h.ID)
+			continue
+		}
+		out = append(out, SearchHit{
+			Path:  path,
+			Score: h.Score,
+			Title: payloadString(h.Payload, "title"),
+		})
+	}
+	return out, nil
+}
+
+// payloadString reads p[key] and returns it if it is a string; missing
+// keys, nil maps and non-string values all collapse to "".
+func payloadString(p map[string]any, key string) string {
+	if v, ok := p[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }
 
 // selectSearchModel picks one model from cfg according to the M1 rules:
