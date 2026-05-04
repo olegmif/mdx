@@ -1,12 +1,81 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/olegmif/mdx/lsp/internal/config"
 )
+
+// --- search mocks --------------------------------------------------------
+
+// searchRequestSnapshot — то, что мок Qdrant вытащил из тела запроса
+// /points/search. Имена полей повторяют JSON для удобства ассертов.
+type searchRequestSnapshot struct {
+	VectorName  string
+	Vector      []float32
+	Limit       int
+	WithPayload bool
+}
+
+// mockQdrantSearchState хранит ответ, который мок будет возвращать на
+// /points/search, и записывает все увиденные запросы.
+type mockQdrantSearchState struct {
+	mu       sync.Mutex
+	requests []searchRequestSnapshot
+	response []map[string]any // массив result[] из ответа Qdrant
+}
+
+// newMockQdrantSearch поднимает httptest-сервер, обслуживающий только
+// POST /collections/{collection}/points/search.
+func newMockQdrantSearch(t *testing.T, collection string) (*httptest.Server, *mockQdrantSearchState) {
+	t.Helper()
+	state := &mockQdrantSearchState{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/collections/"+collection+"/points/search", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Vector struct {
+				Name   string    `json:"name"`
+				Vector []float32 `json:"vector"`
+			} `json:"vector"`
+			Limit       int  `json:"limit"`
+			WithPayload bool `json:"with_payload"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode search: %v", err)
+		}
+		state.mu.Lock()
+		state.requests = append(state.requests, searchRequestSnapshot{
+			VectorName:  body.Vector.Name,
+			Vector:      body.Vector.Vector,
+			Limit:       body.Limit,
+			WithPayload: body.WithPayload,
+		})
+		resp := state.response
+		state.mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"result": resp,
+			"status": "ok",
+		})
+	})
+	return httptest.NewServer(mux), state
+}
+
+// failingServer падает в t.Fatalf на любой запрос — для проверки, что
+// клиент до сети вообще не дошёл.
+func failingServer(t *testing.T, label string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected %s request: %s %s", label, r.Method, r.URL.Path)
+	}))
+}
 
 func TestFormatText(t *testing.T) {
 	hits := []SearchHit{
@@ -168,5 +237,115 @@ func TestSelectSearchModel(t *testing.T) {
 				t.Fatalf("want model %q, got %q", tc.want, got.Name)
 			}
 		})
+	}
+}
+
+// --- end-to-end RunSearch ------------------------------------------------
+
+func TestRunSearchEndToEnd(t *testing.T) {
+	qd, qdState := newMockQdrantSearch(t, "mdx")
+	defer qd.Close()
+	em, emState := newMockOpenAI(t)
+	defer em.Close()
+
+	// Score-значения — степени 1/2 (0.5, 0.25, 0.125), чтобы roundtrip
+	// float32 ↔ float64 ↔ float32 был бит-в-бит точным.
+	qdState.mu.Lock()
+	qdState.response = []map[string]any{
+		{"id": "p1", "score": 0.5, "payload": map[string]any{"path": "a.md", "title": "Alpha"}},
+		{"id": "p2", "score": 0.25, "payload": map[string]any{"path": "b.md"}},
+		{"id": "p3", "score": 0.125, "payload": map[string]any{"path": "c.md", "title": "Gamma"}},
+	}
+	qdState.mu.Unlock()
+
+	cfg := cfgFor(qd.URL, em.URL, 1)
+	cfg.Models[0].QueryPrefix = "Q: "
+
+	hits, err := RunSearch(context.Background(), cfg, "hello", SearchOptions{Limit: 5})
+	if err != nil {
+		t.Fatalf("RunSearch: %v", err)
+	}
+
+	want := []SearchHit{
+		{Path: "a.md", Score: 0.5, Title: "Alpha"},
+		{Path: "b.md", Score: 0.25},
+		{Path: "c.md", Score: 0.125, Title: "Gamma"},
+	}
+	if len(hits) != len(want) {
+		t.Fatalf("got %d hits, want %d", len(hits), len(want))
+	}
+	for i := range want {
+		if hits[i] != want[i] {
+			t.Errorf("hit %d: got %+v, want %+v", i, hits[i], want[i])
+		}
+	}
+
+	qdState.mu.Lock()
+	defer qdState.mu.Unlock()
+	if len(qdState.requests) != 1 {
+		t.Fatalf("Qdrant requests = %d, want 1", len(qdState.requests))
+	}
+	req := qdState.requests[0]
+	if req.VectorName != "m1" {
+		t.Errorf("vector.name = %q, want %q", req.VectorName, "m1")
+	}
+	if req.Limit != 5 {
+		t.Errorf("limit = %d, want 5", req.Limit)
+	}
+	if !req.WithPayload {
+		t.Error("with_payload = false, want true")
+	}
+	if len(req.Vector) == 0 {
+		t.Error("vector.vector is empty, want a non-empty embedding")
+	}
+
+	emState.mu.Lock()
+	defer emState.mu.Unlock()
+	if emState.calls != 1 {
+		t.Errorf("embed calls = %d, want 1", emState.calls)
+	}
+	if len(emState.inputs) != 1 || len(emState.inputs[0]) != 1 {
+		t.Fatalf("embed inputs = %#v, want one call with one input", emState.inputs)
+	}
+	if got, want := emState.inputs[0][0], "Q: hello"; got != want {
+		t.Errorf("embed input = %q, want %q (query_prefix not applied)", got, want)
+	}
+}
+
+func TestRunSearchDefaultLimit(t *testing.T) {
+	qd, qdState := newMockQdrantSearch(t, "mdx")
+	defer qd.Close()
+	em, _ := newMockOpenAI(t)
+	defer em.Close()
+
+	cfg := cfgFor(qd.URL, em.URL, 1)
+
+	if _, err := RunSearch(context.Background(), cfg, "hello", SearchOptions{Limit: 0}); err != nil {
+		t.Fatalf("RunSearch: %v", err)
+	}
+
+	qdState.mu.Lock()
+	defer qdState.mu.Unlock()
+	if len(qdState.requests) != 1 {
+		t.Fatalf("Qdrant requests = %d, want 1", len(qdState.requests))
+	}
+	if got := qdState.requests[0].Limit; got != defaultSearchLimit {
+		t.Errorf("limit = %d, want %d (defaultSearchLimit)", got, defaultSearchLimit)
+	}
+}
+
+func TestRunSearchUnknownModel(t *testing.T) {
+	qd := failingServer(t, "qdrant")
+	defer qd.Close()
+	em := failingServer(t, "embedding")
+	defer em.Close()
+
+	cfg := cfgFor(qd.URL, em.URL, 1)
+	_, err := RunSearch(context.Background(), cfg, "hello", SearchOptions{Model: "ghost"})
+	if err == nil {
+		t.Fatal("RunSearch: want error for unknown model, got nil")
+	}
+	if !strings.Contains(err.Error(), "ghost") {
+		t.Errorf("err = %q, want substring %q", err.Error(), "ghost")
 	}
 }

@@ -91,7 +91,8 @@ func (s *mockQdrantState) pointCount() int {
 type mockEmbedState struct {
 	mu       sync.Mutex
 	calls    int
-	failOnce bool // если true, следующий запрос возвращает 500
+	failOnce bool       // если true, следующий запрос возвращает 500
+	inputs   [][]string // записанный массив input каждого вызова (для проверок в search-тестах)
 }
 
 // newMockOpenAI поднимает мок embedding-сервера в варианте openai.
@@ -117,6 +118,9 @@ func newMockOpenAI(t *testing.T) (*httptest.Server, *mockEmbedState) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode openai: %v", err)
 		}
+		state.mu.Lock()
+		state.inputs = append(state.inputs, append([]string(nil), req.Input...))
+		state.mu.Unlock()
 		type item struct {
 			Index     int       `json:"index"`
 			Embedding []float32 `json:"embedding"`
