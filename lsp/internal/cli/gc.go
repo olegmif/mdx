@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/olegmif/mdx/lsp/internal/config"
+	"github.com/olegmif/mdx/lsp/internal/embed"
 )
 
 // GCStats summarizes one gc run.
@@ -118,4 +119,47 @@ func RunGC(ctx context.Context, conn *sql.DB, ignorePrefixes []string, embedCfg 
 
 	stats.Elapsed = time.Since(start)
 	return stats, nil
+}
+
+// cleanQdrant performs the Qdrant phase of gc: scrolls every point in
+// the collection, treats as orphan any point whose payload.path is not
+// in notesPaths (or is missing entirely), and deletes those points.
+//
+// The function never returns an error: any failure (network, HTTP
+// non-2xx, parse) is logged to stderr as `mdx: gc: qdrant: <op>: <err>`
+// and reported via failed=true. deleted/kept reflect counts up to the
+// last successful step — on a delete failure deleted stays 0 (the
+// orphan batch could not be confirmed removed), kept reflects the
+// scroll outcome.
+func cleanQdrant(ctx context.Context, cfg config.EmbeddingConfig, notesPaths map[string]struct{}) (deleted, kept int, failed bool) {
+	qd := embed.NewQdrantClient(cfg.QdrantURL)
+
+	points, err := qd.Scroll(ctx, cfg.Collection, 0)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mdx: gc: qdrant: scroll: %v\n", err)
+		return 0, 0, true
+	}
+
+	var orphans []string
+	for _, p := range points {
+		if p.Path == "" {
+			orphans = append(orphans, p.ID)
+			continue
+		}
+		if _, ok := notesPaths[p.Path]; !ok {
+			orphans = append(orphans, p.ID)
+			continue
+		}
+		kept++
+	}
+
+	if len(orphans) == 0 {
+		return 0, kept, false
+	}
+
+	if err := qd.DeletePoints(ctx, cfg.Collection, orphans); err != nil {
+		fmt.Fprintf(os.Stderr, "mdx: gc: qdrant: delete %d points: %v\n", len(orphans), err)
+		return 0, kept, true
+	}
+	return len(orphans), kept, false
 }
