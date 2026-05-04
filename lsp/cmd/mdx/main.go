@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/signal"
 	"strings"
@@ -79,6 +81,8 @@ func init() {
 	scanCmd.Flags().BoolVarP(&flagQuiet, "quiet", "q", false, "suppress summary line")
 
 	gcCmd.Flags().StringVar(&flagIgnore, "ignore", "", "path to ignore file (default: $XDG_CONFIG_HOME/mdx/ignore)")
+	gcCmd.Flags().StringVar(&flagEmbedConfig, "embedding-config", "",
+		"path to embedding config (default: $XDG_CONFIG_HOME/mdx/embedding.yaml)")
 	gcCmd.Flags().BoolVarP(&flagQuiet, "quiet", "q", false, "suppress summary line")
 
 	embedCmd.Flags().StringVar(&flagEmbedConfig, "embedding-config", "",
@@ -203,10 +207,12 @@ func runGC(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	embedCfg := loadGCEmbeddingConfig(flagEmbedConfig)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	stats, err := cli.RunGC(ctx, conn, ignorePrefixes, nil)
+	stats, err := cli.RunGC(ctx, conn, ignorePrefixes, embedCfg)
 	if err != nil {
 		return err
 	}
@@ -216,6 +222,29 @@ func runGC(cmd *cobra.Command, args []string) error {
 			stats.Deleted, stats.Kept, gcQdrantSummary(stats), stats.Elapsed)
 	}
 	return nil
+}
+
+// loadGCEmbeddingConfig resolves and loads the embedding config for
+// the gc Qdrant phase. A missing file is not an error — gc must keep
+// working on machines that do not use embeddings at all. Other load
+// errors (parse, validation) are logged and the Qdrant phase is
+// skipped via a nil return.
+func loadGCEmbeddingConfig(override string) *config.EmbeddingConfig {
+	cfgPath, err := config.ResolveEmbeddingPath(override)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mdx: gc: resolve embedding config: %v\n", err)
+		return nil
+	}
+	cfg, _, err := config.LoadEmbedding(cfgPath)
+	switch {
+	case err == nil:
+		return &cfg
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	default:
+		fmt.Fprintf(os.Stderr, "mdx: gc: embedding config (%s): %v\n", cfgPath, err)
+		return nil
+	}
 }
 
 // gcQdrantSummary renders the Qdrant phase tail of `mdx gc` summary.
