@@ -256,9 +256,17 @@ func runEmbed(cmd *cobra.Command, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	_, err = cli.RunEmbed(ctx, conn, cfg, cli.EmbedOptions{
+	stats, err := cli.RunEmbed(ctx, conn, cfg, cli.EmbedOptions{
 		Model: flagEmbedModel,
 		All:   flagEmbedAll,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+
+	if !flagQuiet {
+		fmt.Printf("embedded: %d, skipped: %d, failed: %d, elapsed: %s\n",
+			stats.Embedded, stats.Skipped, stats.Failed, stats.Elapsed)
+	}
+	return nil
 }
