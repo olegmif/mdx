@@ -41,19 +41,25 @@ function M.invoke(query, on_done)
 		tostring(cfg.limit),
 		query,
 	}
-	vim.system(cmd, { text = true, timeout = cfg.timeout_ms }, vim.schedule_wrap(function(obj)
+	-- vim.system бросает Lua-ошибку синхронно, если бинарь не найден
+	-- (ENOENT) или не исполняется. Перехватываем здесь, чтобы такой
+	-- сбой не разваливал :MdxSearch с stack trace.
+	local ok, err = pcall(vim.system, cmd, { text = true, timeout = cfg.timeout_ms }, vim.schedule_wrap(function(obj)
 		if obj.code ~= 0 then
 			local stderr = (obj.stderr and obj.stderr ~= "") and obj.stderr or "exit code " .. tostring(obj.code)
 			on_done(nil, "search failed: " .. stderr)
 			return
 		end
-		local hits, err = M.parse(obj.stdout)
+		local hits, perr = M.parse(obj.stdout)
 		if not hits then
-			on_done(nil, "failed to parse search output: " .. err)
+			on_done(nil, "failed to parse search output: " .. perr)
 			return
 		end
 		on_done(hits, nil)
 	end))
+	if not ok then
+		on_done(nil, "search failed: " .. tostring(err))
+	end
 end
 
 local function show(query)

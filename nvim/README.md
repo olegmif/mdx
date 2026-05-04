@@ -8,12 +8,15 @@
 
 `<leader>mt` открывает picker поиска по тегам: prompt принимает имена тегов и `*`/`?`-wildcards, picker сужает список заметок на лету. Выбор открывает заметку в текущем буфере.
 
+`<leader>m/` запускает dense-поиск по корпусу: prompt'ом запрашивается строка запроса, она отправляется в `mdx search --format json`, результат открывается в Telescope-picker'е, отсортированном по убыванию score Qdrant. Выбор открывает заметку в текущем буфере.
+
 ## Требования
 
 - Neovim ≥ 0.11
 - `nvim-treesitter` с парсерами `markdown` и `markdown_inline`
 - `telescope.nvim` (для picker'а)
 - Запущенный `mdx`-LSP-сервер с заполненной БД (см. [strategy.md](../docs/strategy.md))
+- Для `:MdxSearch` дополнительно: бинарь `mdx` в `$PATH` (или путь, заданный через `search.mdx_bin`), отработавший `mdx embed` хотя бы для одной модели, поднятые Qdrant и embedding-сервер (см. [M0_embeddings.md](../docs/M0_embeddings.md), [M1_embeddings.md](../docs/M1_embeddings.md))
 
 ## Установка
 
@@ -50,16 +53,22 @@ require("mdx").setup({
         follow_split = "<leader>ms", -- открыть в вертикальном сплите
         insert_link = "<leader>mi",  -- picker по заметкам
         tag_search = "<leader>mt",   -- picker поиска по тегам
+        search = "<leader>m/",       -- dense-поиск через mdx search
     },
     conceal = true, -- скрывать path-часть ссылки
+    search = {
+        mdx_bin    = "mdx",   -- путь к Go-бинарю; резолвится через $PATH
+        limit      = 30,      -- --limit для mdx search
+        timeout_ms = 30000,   -- timeout для vim.system
+    },
 })
 ```
 
-Любой keymap отключается передачей `false` — соответствующая команда (`:MdxFollow`, `:MdxFollowSplit`, `:MdxInsertLink`, `:MdxTagSearch`) при этом остаётся доступной:
+Любой keymap отключается передачей `false` — соответствующая команда (`:MdxFollow`, `:MdxFollowSplit`, `:MdxInsertLink`, `:MdxTagSearch`, `:MdxSearch`) при этом остаётся доступной:
 
 ```lua
 require("mdx").setup({
-    keymaps = { insert_link = false, tag_search = false },
+    keymaps = { insert_link = false, tag_search = false, search = false },
     conceal = false,
 })
 ```
@@ -70,6 +79,7 @@ require("mdx").setup({
 - `:MdxFollowSplit` — открыть в вертикальном сплите.
 - `:MdxInsertLink` — открыть picker по существующим заметкам, выбор вставляет ссылку.
 - `:MdxTagSearch` — открыть picker поиска по тегам, выбор открывает заметку в текущем окне.
+- `:MdxSearch [query]` — dense-поиск по корпусу через `mdx search`. Без аргумента поднимает `vim.ui.input`; с аргументом использует его как запрос напрямую (`:MdxSearch qdrant configuration`).
 
 Поведение `:MdxFollow` / `:MdxFollowSplit`:
 - если под курсором нет ссылки — уведомление `mdx: no link under cursor`,
@@ -84,12 +94,20 @@ require("mdx").setup({
 - если LSP-клиент `mdx` не подключён — уведомление `mdx: LSP client not attached`, picker не открывается;
 - иначе открывается picker с заголовком `mdx: tag search` и боковым превью содержимого выделенной заметки. При пустом prompt'е показывается **весь** индекс. Грамматику prompt'а см. ниже. Выбор `<CR>` переключает текущий буфер на выбранную заметку (как `:MdxFollow`); Esc закрывает picker без побочных правок.
 
+Поведение `:MdxSearch`:
+- без аргумента поднимает `vim.ui.input` с promptом `MdxSearch:`; пустой ответ или Esc — тихая отмена;
+- запрос отправляется в `mdx search --format json --limit N` через `vim.system` асинхронно (UI не блокируется); при превышении `search.timeout_ms` процесс убивается с уведомлением `mdx: search failed: ...`;
+- при ненулевом коде возврата CLI или нечитаемом JSON выводится ERROR-уведомление со stderr/текстом ошибки;
+- пустая выдача Qdrant — INFO-уведомление `mdx: no results`, picker не открывается;
+- иначе открывается picker с заголовком `mdx: search (N)`, без собственной fuzzy-фильтрации поверх (порядок результатов равен порядку Qdrant — по убыванию score). Выбор `<CR>` открывает заметку в текущем окне; стандартные telescope-мэппинги `<C-v>` / `<C-x>` / `<C-t>` — vsplit / split / tab.
+
 ## API
 
 - `require("mdx").follow()` — то же, что `:MdxFollow`. Возвращает `true`, если сценарий обработан, `false`, если под курсором нет ссылки.
 - `require("mdx").follow_split()` — аналог `:MdxFollowSplit`.
 - `require("mdx").insert_link()` — то же, что `:MdxInsertLink`.
 - `require("mdx").tag_search()` — то же, что `:MdxTagSearch`.
+- `require("mdx").search(query?)` — то же, что `:MdxSearch [query]`. Без аргумента поднимает `vim.ui.input`.
 - `require("mdx").setup(opts)` — конфигурация плагина.
 
 ## Формат вставляемой ссылки
