@@ -35,3 +35,14 @@ CREATE TABLE tags (
 );
 
 CREATE INDEX idx_tags_tag ON tags(tag);
+
+CREATE TABLE embeddings (
+  path          TEXT NOT NULL,
+  model         TEXT NOT NULL,
+  content_hash  TEXT NOT NULL,
+  embedded_at   INTEGER NOT NULL,
+  PRIMARY KEY (path, model),
+  FOREIGN KEY (path) REFERENCES notes(path) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_embeddings_model ON embeddings(model);
