@@ -1,0 +1,233 @@
+package embed
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+
+	"github.com/google/uuid"
+
+	"github.com/olegmif/mdx/lsp/internal/config"
+)
+
+func TestEnsureCollectionCreatesWhenAbsent(t *testing.T) {
+	var seen createCollectionRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			http.NotFound(w, r)
+		case http.MethodPut:
+			if err := json.NewDecoder(r.Body).Decode(&seen); err != nil {
+				t.Fatalf("decode put: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"result":true,"status":"ok"}`)
+		default:
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+	}))
+	defer srv.Close()
+
+	cfg := config.EmbeddingConfig{
+		QdrantURL:  srv.URL,
+		Collection: "mdx",
+		Models: []config.ModelConfig{
+			{Name: "m1", Dim: 8},
+			{Name: "m2", Dim: 16},
+		},
+	}
+	c := NewQdrantClient(srv.URL)
+	if err := c.EnsureCollection(context.Background(), cfg); err != nil {
+		t.Fatalf("EnsureCollection: %v", err)
+	}
+	if got, want := seen.Vectors["m1"], (vectorParams{Size: 8, Distance: distanceCosine}); got != want {
+		t.Errorf("m1 = %+v, want %+v", got, want)
+	}
+	if got, want := seen.Vectors["m2"], (vectorParams{Size: 16, Distance: distanceCosine}); got != want {
+		t.Errorf("m2 = %+v, want %+v", got, want)
+	}
+}
+
+func TestEnsureCollectionPatchesMissing(t *testing.T) {
+	var seenPatch updateCollectionRequest
+	var sawPut bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{
+				"result": {"config": {"params": {"vectors": {"m1": {"size": 8, "distance": "Cosine"}}}}},
+				"status": "ok"
+			}`)
+		case http.MethodPatch:
+			if err := json.NewDecoder(r.Body).Decode(&seenPatch); err != nil {
+				t.Fatalf("decode patch: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"result":true,"status":"ok"}`)
+		case http.MethodPut:
+			sawPut = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+	}))
+	defer srv.Close()
+
+	cfg := config.EmbeddingConfig{
+		QdrantURL:  srv.URL,
+		Collection: "mdx",
+		Models: []config.ModelConfig{
+			{Name: "m1", Dim: 8},
+			{Name: "m2", Dim: 16},
+		},
+	}
+	c := NewQdrantClient(srv.URL)
+	if err := c.EnsureCollection(context.Background(), cfg); err != nil {
+		t.Fatalf("EnsureCollection: %v", err)
+	}
+	if sawPut {
+		t.Error("PUT observed; expected only GET+PATCH when collection exists")
+	}
+	if _, ok := seenPatch.Vectors["m1"]; ok {
+		t.Error("PATCH includes m1 (already exists in collection)")
+	}
+	if got, want := seenPatch.Vectors["m2"], (vectorParams{Size: 16, Distance: distanceCosine}); got != want {
+		t.Errorf("m2 in patch = %+v, want %+v", got, want)
+	}
+}
+
+func TestEnsureCollectionAllVectorsPresent(t *testing.T) {
+	var sawPatch, sawPut bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{
+				"result": {"config": {"params": {"vectors": {
+					"m1": {"size": 8,  "distance": "Cosine"},
+					"m2": {"size": 16, "distance": "Cosine"}
+				}}}},
+				"status": "ok"
+			}`)
+		case http.MethodPatch:
+			sawPatch = true
+		case http.MethodPut:
+			sawPut = true
+		}
+	}))
+	defer srv.Close()
+
+	cfg := config.EmbeddingConfig{
+		QdrantURL:  srv.URL,
+		Collection: "mdx",
+		Models: []config.ModelConfig{
+			{Name: "m1", Dim: 8},
+			{Name: "m2", Dim: 16},
+		},
+	}
+	if err := NewQdrantClient(srv.URL).EnsureCollection(context.Background(), cfg); err != nil {
+		t.Fatalf("EnsureCollection: %v", err)
+	}
+	if sawPatch || sawPut {
+		t.Errorf("unexpected write: patch=%v put=%v", sawPatch, sawPut)
+	}
+}
+
+func TestEnsureCollectionGETError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	cfg := config.EmbeddingConfig{
+		QdrantURL:  srv.URL,
+		Collection: "mdx",
+		Models:     []config.ModelConfig{{Name: "m1", Dim: 8}},
+	}
+	err := NewQdrantClient(srv.URL).EnsureCollection(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("EnsureCollection: want error")
+	}
+	if !strings.Contains(err.Error(), "mdx") || !strings.Contains(err.Error(), "500") {
+		t.Errorf("err = %q, want substrings [mdx, 500]", err.Error())
+	}
+}
+
+func TestQdrantUpsert(t *testing.T) {
+	var seenURL *url.URL
+	var seenBody upsertRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenURL = r.URL
+		if err := json.NewDecoder(r.Body).Decode(&seenBody); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"result":{},"status":"ok"}`)
+	}))
+	defer srv.Close()
+
+	c := NewQdrantClient(srv.URL)
+	id := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	points := []Point{{
+		ID:      id,
+		Vectors: map[string][]float32{"m1": {1, 2, 3}},
+		Payload: map[string]any{"path": "/n.md"},
+	}}
+	if err := c.Upsert(context.Background(), "mdx", points); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if seenURL.Path != "/collections/mdx/points" {
+		t.Errorf("path = %s, want /collections/mdx/points", seenURL.Path)
+	}
+	if got := seenURL.Query().Get("wait"); got != "true" {
+		t.Errorf("wait = %q, want true", got)
+	}
+	if len(seenBody.Points) != 1 {
+		t.Fatalf("points = %d, want 1", len(seenBody.Points))
+	}
+	p := seenBody.Points[0]
+	if p.ID != id.String() {
+		t.Errorf("id = %s, want %s", p.ID, id)
+	}
+	if got := p.Vector["m1"]; len(got) != 3 || got[0] != 1 || got[2] != 3 {
+		t.Errorf("vector m1 = %v, want [1 2 3]", got)
+	}
+	if p.Payload["path"] != "/n.md" {
+		t.Errorf("payload.path = %v, want /n.md", p.Payload["path"])
+	}
+}
+
+func TestQdrantUpsertEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("Upsert with empty points list should not call the server")
+	}))
+	defer srv.Close()
+
+	if err := NewQdrantClient(srv.URL).Upsert(context.Background(), "mdx", nil); err != nil {
+		t.Fatalf("Upsert(nil): %v", err)
+	}
+}
+
+func TestQdrantUpsertHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	err := NewQdrantClient(srv.URL).Upsert(context.Background(), "mdx", []Point{{
+		ID:      uuid.New(),
+		Vectors: map[string][]float32{"m1": {0}},
+	}})
+	if err == nil {
+		t.Fatal("Upsert: want error")
+	}
+	if !strings.Contains(err.Error(), "502") || !strings.Contains(err.Error(), "mdx") {
+		t.Errorf("err = %q, want substrings [mdx, 502]", err.Error())
+	}
+}
