@@ -2,10 +2,15 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/olegmif/mdx/lsp/internal/config"
 	"github.com/olegmif/mdx/lsp/internal/db"
 )
 
@@ -162,5 +167,180 @@ func TestGCKeepsExistingFilesNotIgnored(t *testing.T) {
 	}
 	if stats.Kept != 5 {
 		t.Errorf("kept = %d, want 5", stats.Kept)
+	}
+}
+
+func TestGCQdrantHappyPath(t *testing.T) {
+	tmp := copyFixturesToTmp(t, "testdata/fixtures")
+
+	dbPath := filepath.Join(t.TempDir(), "mdx.db")
+	conn, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+	if err := db.Migrate(conn); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	if _, err := RunScan(context.Background(), conn, []string{tmp}, DefaultExcludes, nil); err != nil {
+		t.Fatalf("RunScan: %v", err)
+	}
+
+	// Снести один файл — в mdx-фазе уйдёт его строка, в Qdrant-фазе должна
+	// уйти и его точка (если бы была — но мы её в моке не возвращаем,
+	// так как сценарий «уже отсутствует в Qdrant» здесь не проверяется).
+	if err := os.Remove(filepath.Join(tmp, "with-links.md")); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+
+	survivor := filepath.Join(tmp, "plain.md")
+
+	var deleted []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/collections/mdx/points/scroll":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{
+				"result": {
+					"points": [
+						{"id":"id-keep","payload":{"path":%q}},
+						{"id":"id-orphan-1","payload":{"path":"/nonexistent/orphan-1.md"}},
+						{"id":"id-orphan-2","payload":{"path":"/nonexistent/orphan-2.md"}}
+					],
+					"next_page_offset": null
+				},
+				"status": "ok"
+			}`, survivor)
+		case "/collections/mdx/points/delete":
+			var body struct {
+				Points []string `json:"points"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode delete: %v", err)
+			}
+			deleted = append(deleted, body.Points...)
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"result":{},"status":"ok"}`)
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	cfg := &config.EmbeddingConfig{QdrantURL: srv.URL, Collection: "mdx"}
+
+	stats, err := RunGC(context.Background(), conn, nil, cfg)
+	if err != nil {
+		t.Fatalf("RunGC: %v", err)
+	}
+
+	if stats.Deleted != 1 {
+		t.Errorf("Deleted = %d, want 1", stats.Deleted)
+	}
+	if stats.Kept != 4 {
+		t.Errorf("Kept = %d, want 4", stats.Kept)
+	}
+	if stats.QdrantSkipped {
+		t.Error("QdrantSkipped = true, want false")
+	}
+	if stats.QdrantFailed {
+		t.Error("QdrantFailed = true, want false")
+	}
+	if stats.QdrantDeleted != 2 {
+		t.Errorf("QdrantDeleted = %d, want 2", stats.QdrantDeleted)
+	}
+	if stats.QdrantKept != 1 {
+		t.Errorf("QdrantKept = %d, want 1", stats.QdrantKept)
+	}
+
+	want := []string{"id-orphan-1", "id-orphan-2"}
+	if len(deleted) != len(want) || deleted[0] != want[0] || deleted[1] != want[1] {
+		t.Errorf("delete request ids = %v, want %v", deleted, want)
+	}
+}
+
+func TestGCQdrantUnavailable(t *testing.T) {
+	tmp := copyFixturesToTmp(t, "testdata/fixtures")
+
+	dbPath := filepath.Join(t.TempDir(), "mdx.db")
+	conn, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+	if err := db.Migrate(conn); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	if _, err := RunScan(context.Background(), conn, []string{tmp}, DefaultExcludes, nil); err != nil {
+		t.Fatalf("RunScan: %v", err)
+	}
+	if err := os.Remove(filepath.Join(tmp, "with-links.md")); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+
+	// Закрытый сервер: URL валиден, но коннект завершается отказом.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv.Close()
+
+	cfg := &config.EmbeddingConfig{QdrantURL: srv.URL, Collection: "mdx"}
+
+	stats, err := RunGC(context.Background(), conn, nil, cfg)
+	if err != nil {
+		t.Fatalf("RunGC: want nil error, got %v", err)
+	}
+	if stats.Deleted != 1 {
+		t.Errorf("Deleted = %d, want 1 (mdx-фаза должна была отработать)", stats.Deleted)
+	}
+	if stats.Kept != 4 {
+		t.Errorf("Kept = %d, want 4", stats.Kept)
+	}
+	if stats.QdrantSkipped {
+		t.Error("QdrantSkipped = true, want false (фаза запускалась)")
+	}
+	if !stats.QdrantFailed {
+		t.Error("QdrantFailed = false, want true")
+	}
+	if stats.QdrantDeleted != 0 {
+		t.Errorf("QdrantDeleted = %d, want 0 (scroll упал)", stats.QdrantDeleted)
+	}
+}
+
+func TestGCQdrantSkippedWithoutConfig(t *testing.T) {
+	tmp := copyFixturesToTmp(t, "testdata/fixtures")
+
+	dbPath := filepath.Join(t.TempDir(), "mdx.db")
+	conn, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer conn.Close()
+	if err := db.Migrate(conn); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	if _, err := RunScan(context.Background(), conn, []string{tmp}, DefaultExcludes, nil); err != nil {
+		t.Fatalf("RunScan: %v", err)
+	}
+	if err := os.Remove(filepath.Join(tmp, "with-links.md")); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+
+	stats, err := RunGC(context.Background(), conn, nil, nil)
+	if err != nil {
+		t.Fatalf("RunGC: %v", err)
+	}
+	if stats.Deleted != 1 {
+		t.Errorf("Deleted = %d, want 1", stats.Deleted)
+	}
+	if !stats.QdrantSkipped {
+		t.Error("QdrantSkipped = false, want true")
+	}
+	if stats.QdrantFailed {
+		t.Error("QdrantFailed = true, want false")
+	}
+	if stats.QdrantDeleted != 0 {
+		t.Errorf("QdrantDeleted = %d, want 0", stats.QdrantDeleted)
 	}
 }
