@@ -14,19 +14,31 @@ import (
 
 // GCStats summarizes one gc run.
 type GCStats struct {
-	Deleted int           // notes rows removed
-	Kept    int           // notes rows that survived
-	Elapsed time.Duration // total wall time
+	Deleted       int           // notes rows removed
+	Kept          int           // notes rows that survived
+	QdrantDeleted int           // qdrant points removed
+	QdrantKept    int           // qdrant points kept
+	QdrantSkipped bool          // qdrant phase did not run (no embedding config)
+	QdrantFailed  bool          // qdrant phase ran and produced at least one error
+	Elapsed       time.Duration // total wall time
 }
 
 // RunGC removes from the database every notes row whose file is missing
 // from disk or whose path falls under any prefix in ignorePrefixes. FK
-// ON DELETE CASCADE drops dependent rows in links and tags.
+// ON DELETE CASCADE drops dependent rows in links, tags and embeddings.
 //
 // Stat errors other than fs.ErrNotExist (typically permission issues)
 // are reported to stderr and the row is kept — better to leave a row we
 // could not verify than to silently drop it.
-func RunGC(ctx context.Context, conn *sql.DB, ignorePrefixes []string) (GCStats, error) {
+//
+// embedCfg, when non-nil, triggers a follow-up Qdrant cleanup phase that
+// removes points whose payload.path is no longer in notes. Any failure
+// of the Qdrant phase is logged to stderr and reflected in
+// stats.QdrantFailed; it does not propagate as an error from RunGC.
+// embedCfg == nil skips the Qdrant phase entirely (stats.QdrantSkipped).
+// The full Qdrant phase is wired in Steps 4–5 of M3_embeddings; for now
+// only the skip branch is honoured.
+func RunGC(ctx context.Context, conn *sql.DB, ignorePrefixes []string, embedCfg *config.EmbeddingConfig) (GCStats, error) {
 	start := time.Now()
 	var stats GCStats
 
@@ -99,6 +111,11 @@ func RunGC(ctx context.Context, conn *sql.DB, ignorePrefixes []string) (GCStats,
 	}
 
 	stats.Kept = len(dbPaths) - stats.Deleted
+
+	if embedCfg == nil {
+		stats.QdrantSkipped = true
+	}
+
 	stats.Elapsed = time.Since(start)
 	return stats, nil
 }

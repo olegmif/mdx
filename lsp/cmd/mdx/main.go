@@ -206,7 +206,7 @@ func runGC(cmd *cobra.Command, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	stats, err := cli.RunGC(ctx, conn, ignorePrefixes)
+	stats, err := cli.RunGC(ctx, conn, ignorePrefixes, nil)
 	if err != nil {
 		return err
 	}

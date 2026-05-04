@@ -40,7 +40,7 @@ func TestGCRemovesDeletedFile(t *testing.T) {
 		t.Fatalf("remove: %v", err)
 	}
 
-	stats, err := RunGC(context.Background(), conn, nil)
+	stats, err := RunGC(context.Background(), conn, nil, nil)
 	if err != nil {
 		t.Fatalf("RunGC: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestGCRemovesUnderIgnorePrefix(t *testing.T) {
 	}
 
 	nestedPrefix := filepath.Join(tmp, "nested")
-	stats, err := RunGC(context.Background(), conn, []string{nestedPrefix})
+	stats, err := RunGC(context.Background(), conn, []string{nestedPrefix}, nil)
 	if err != nil {
 		t.Fatalf("RunGC: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestGCNoOpOnCleanDB(t *testing.T) {
 		t.Fatalf("RunScan: %v", err)
 	}
 
-	stats, err := RunGC(context.Background(), conn, nil)
+	stats, err := RunGC(context.Background(), conn, nil, nil)
 	if err != nil {
 		t.Fatalf("RunGC: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestGCKeepsExistingFilesNotIgnored(t *testing.T) {
 	}
 
 	// Ignore prefix that does not match any indexed file.
-	stats, err := RunGC(context.Background(), conn, []string{"/nonexistent/prefix"})
+	stats, err := RunGC(context.Background(), conn, []string{"/nonexistent/prefix"}, nil)
 	if err != nil {
 		t.Fatalf("RunGC: %v", err)
 	}
