@@ -228,5 +228,37 @@ func runLSP(cmd *cobra.Command, args []string) error {
 }
 
 func runEmbed(cmd *cobra.Command, args []string) error {
-	return fmt.Errorf("embed: not implemented")
+	cfgPath, err := config.ResolveEmbeddingPath(flagEmbedConfig)
+	if err != nil {
+		return err
+	}
+	cfg, warnings, err := config.LoadEmbedding(cfgPath)
+	if err != nil {
+		return fmt.Errorf("embedding config (%s): %w", cfgPath, err)
+	}
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "mdx: embedding: %s\n", w)
+	}
+
+	dbPath, err := db.ResolvePath(flagDB)
+	if err != nil {
+		return err
+	}
+	conn, err := db.Open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if err := db.Migrate(conn); err != nil {
+		return err
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	_, err = cli.RunEmbed(ctx, conn, cfg, cli.EmbedOptions{
+		Model: flagEmbedModel,
+		All:   flagEmbedAll,
+	})
+	return err
 }

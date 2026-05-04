@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	"github.com/olegmif/mdx/lsp/internal/config"
 )
 
 // EmbedOptions collects flags driving a single mdx embed run.
@@ -21,8 +23,7 @@ type EmbedStats struct {
 	Elapsed  time.Duration
 }
 
-// RunEmbed is filled in by Step 8. The signature widens to accept
-// config.EmbeddingConfig in Step 2.
-func RunEmbed(ctx context.Context, conn *sql.DB, opts EmbedOptions) (EmbedStats, error) {
+// RunEmbed is filled in by Step 8.
+func RunEmbed(ctx context.Context, conn *sql.DB, cfg config.EmbeddingConfig, opts EmbedOptions) (EmbedStats, error) {
 	return EmbedStats{}, errors.New("embed: not implemented")
 }
