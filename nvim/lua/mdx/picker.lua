@@ -148,6 +148,56 @@ function M.sql_results(query_name, rows, on_select)
 		:find()
 end
 
+-- Picker по результатам dense-поиска (mdx search). hits — массив
+-- { path, score, title? } из CLI; on_select(hit) вызывается на Enter.
+-- sorter = empty(): порядок Qdrant (по убыванию score) сохраняется,
+-- Telescope не перебивает его fuzzy-матчингом против ordinal.
+function M.search_results(hits, on_select)
+	local ok, pickers = pcall(require, "telescope.pickers")
+	if not ok then
+		vim.notify("mdx: telescope.nvim is required", vim.log.levels.ERROR)
+		return
+	end
+	local finders = require("telescope.finders")
+	local sorters = require("telescope.sorters")
+	local conf = require("telescope.config").values
+	local actions = require("telescope.actions")
+	local action_state = require("telescope.actions.state")
+	local insert = require("mdx.insert")
+
+	pickers
+		.new({}, {
+			prompt_title = string.format("mdx: search (%d)", #hits),
+			finder = finders.new_table({
+				results = hits,
+				entry_maker = function(hit)
+					local title = hit.title and hit.title ~= "" and hit.title
+						or vim.fn.fnamemodify(hit.path, ":t:r")
+					local display_path = insert.to_display_path(hit.path)
+					return {
+						value = hit,
+						path = hit.path,
+						display = string.format("%s (%s)", title, display_path),
+						ordinal = title .. " " .. hit.path,
+					}
+				end,
+			}),
+			sorter = sorters.empty(),
+			previewer = conf.file_previewer({}),
+			attach_mappings = function(prompt_bufnr, _)
+				actions.select_default:replace(function()
+					local selection = action_state.get_selected_entry()
+					actions.close(prompt_bufnr)
+					if selection and on_select then
+						on_select(selection.value)
+					end
+				end)
+				return true
+			end,
+		})
+		:find()
+end
+
 -- Picker по списку Lua-скриптов. on_select(script_entry) получает
 -- { name, path, source, description }.
 function M.pick_scripts(scripts, on_select)
