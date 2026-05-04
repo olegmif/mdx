@@ -16,14 +16,17 @@ import (
 )
 
 var (
-	flagDB          string
-	flagIgnore      string
-	flagExcludes    []string
-	flagQuiet       bool
-	flagLog         string
-	flagEmbedConfig string
-	flagEmbedModel  string
-	flagEmbedAll    bool
+	flagDB           string
+	flagIgnore       string
+	flagExcludes     []string
+	flagQuiet        bool
+	flagLog          string
+	flagEmbedConfig  string
+	flagEmbedModel   string
+	flagEmbedAll     bool
+	flagSearchModel  string
+	flagSearchLimit  int
+	flagSearchFormat string
 )
 
 var rootCmd = &cobra.Command{
@@ -57,6 +60,13 @@ var embedCmd = &cobra.Command{
 	RunE:  runEmbed,
 }
 
+var searchCmd = &cobra.Command{
+	Use:   "search <query>...",
+	Short: "Run dense search over the indexed corpus and print matching note paths",
+	Args:  cobra.MinimumNArgs(1),
+	RunE:  runSearch,
+}
+
 func init() {
 	rootCmd.PersistentFlags().StringVar(&flagDB, "db", "", "path to SQLite database (default: $XDG_DATA_HOME/mdx/mdx.db)")
 	lspCmd.Flags().StringVar(&flagLog, "log", "", "path to LSP log file (default: $XDG_STATE_HOME/mdx/lsp.log)")
@@ -78,10 +88,20 @@ func init() {
 		"ignore embeddings table and recompute every note")
 	embedCmd.Flags().BoolVarP(&flagQuiet, "quiet", "q", false, "suppress summary line")
 
+	searchCmd.Flags().StringVar(&flagEmbedConfig, "embedding-config", "",
+		"path to embedding config (default: $XDG_CONFIG_HOME/mdx/embedding.yaml)")
+	searchCmd.Flags().StringVar(&flagSearchModel, "model", "",
+		"model name from config (default: model with default_for_search=true)")
+	searchCmd.Flags().IntVar(&flagSearchLimit, "limit", 20,
+		"maximum number of results")
+	searchCmd.Flags().StringVar(&flagSearchFormat, "format", "text",
+		"output format: text or json")
+
 	rootCmd.AddCommand(scanCmd)
 	rootCmd.AddCommand(gcCmd)
 	rootCmd.AddCommand(lspCmd)
 	rootCmd.AddCommand(embedCmd)
+	rootCmd.AddCommand(searchCmd)
 }
 
 func main() {
@@ -269,4 +289,8 @@ func runEmbed(cmd *cobra.Command, args []string) error {
 			stats.Embedded, stats.Skipped, stats.Failed, stats.Elapsed)
 	}
 	return nil
+}
+
+func runSearch(cmd *cobra.Command, args []string) error {
+	return fmt.Errorf("search: not implemented")
 }
