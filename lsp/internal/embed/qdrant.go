@@ -200,6 +200,78 @@ func (q *QdrantClient) Search(ctx context.Context, collection, vectorName string
 	return hits, nil
 }
 
+// ScrollPoint — одна точка в выдаче Scroll. Payload сужен до того,
+// что нужно gc'ю (только path); полный payload остаётся в коллекции
+// нетронутым.
+type ScrollPoint struct {
+	ID   string
+	Path string
+}
+
+const defaultScrollBatch = 1000
+
+type scrollRequest struct {
+	Limit       int      `json:"limit"`
+	WithPayload []string `json:"with_payload"`
+	WithVector  bool     `json:"with_vector"`
+	Offset      any      `json:"offset,omitempty"`
+}
+
+type scrollResponse struct {
+	Result struct {
+		Points         []scrollResponsePoint `json:"points"`
+		NextPageOffset any                   `json:"next_page_offset"`
+	} `json:"result"`
+}
+
+type scrollResponsePoint struct {
+	ID      any            `json:"id"`
+	Payload map[string]any `json:"payload"`
+}
+
+// Scroll итерирует все точки коллекции и возвращает их id и payload.path.
+// Внутри делает несколько HTTP-запросов с pagination через
+// next_page_offset; завершается, когда сервер возвращает null. batchSize
+// задаёт размер одной страницы; <=0 трактуется как defaultScrollBatch.
+func (q *QdrantClient) Scroll(ctx context.Context, collection string, batchSize int) ([]ScrollPoint, error) {
+	if batchSize <= 0 {
+		batchSize = defaultScrollBatch
+	}
+	op := fmt.Sprintf("scroll %q", collection)
+	path := "/collections/" + collection + "/points/scroll"
+
+	var out []ScrollPoint
+	var offset any
+	for {
+		body, err := json.Marshal(scrollRequest{
+			Limit:       batchSize,
+			WithPayload: []string{"path"},
+			WithVector:  false,
+			Offset:      offset,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("qdrant: marshal %s: %w", op, err)
+		}
+		var resp scrollResponse
+		if err := q.doJSONReply(ctx, http.MethodPost, path, body, op, &resp); err != nil {
+			return nil, err
+		}
+		for _, p := range resp.Result.Points {
+			sp := ScrollPoint{ID: fmt.Sprintf("%v", p.ID)}
+			if v, ok := p.Payload["path"]; ok {
+				if s, ok := v.(string); ok {
+					sp.Path = s
+				}
+			}
+			out = append(out, sp)
+		}
+		if resp.Result.NextPageOffset == nil {
+			return out, nil
+		}
+		offset = resp.Result.NextPageOffset
+	}
+}
+
 // Upsert загружает batch точек одним запросом, ждёт подтверждения
 // записи (`wait=true`). Пустой batch — no-op без обращения к серверу.
 func (q *QdrantClient) Upsert(ctx context.Context, collection string, points []Point) error {

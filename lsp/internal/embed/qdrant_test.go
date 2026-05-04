@@ -275,6 +275,131 @@ func TestQdrantSearch(t *testing.T) {
 	}
 }
 
+func TestQdrantScrollPaginates(t *testing.T) {
+	var seenURLs []*url.URL
+	var seenBodies []scrollRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenURLs = append(seenURLs, r.URL)
+		var body scrollRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode scroll: %v", err)
+		}
+		seenBodies = append(seenBodies, body)
+		w.Header().Set("Content-Type", "application/json")
+		switch body.Offset {
+		case nil:
+			_, _ = io.WriteString(w, `{
+				"result": {
+					"points": [
+						{"id": "00000000-0000-0000-0000-000000000001", "payload": {"path": "/n/a.md"}},
+						{"id": "00000000-0000-0000-0000-000000000002", "payload": {"path": "/n/b.md"}}
+					],
+					"next_page_offset": "p2"
+				},
+				"status": "ok"
+			}`)
+		case "p2":
+			_, _ = io.WriteString(w, `{
+				"result": {
+					"points": [
+						{"id": "00000000-0000-0000-0000-000000000003", "payload": {"path": "/n/c.md"}}
+					],
+					"next_page_offset": null
+				},
+				"status": "ok"
+			}`)
+		default:
+			t.Fatalf("unexpected offset %#v", body.Offset)
+		}
+	}))
+	defer srv.Close()
+
+	pts, err := NewQdrantClient(srv.URL).Scroll(context.Background(), "mdx", 1000)
+	if err != nil {
+		t.Fatalf("Scroll: %v", err)
+	}
+	if len(seenURLs) != 2 {
+		t.Fatalf("HTTP requests = %d, want 2", len(seenURLs))
+	}
+	if seenURLs[0].Path != "/collections/mdx/points/scroll" {
+		t.Errorf("path = %s, want /collections/mdx/points/scroll", seenURLs[0].Path)
+	}
+	if seenBodies[0].Limit != 1000 {
+		t.Errorf("limit = %d, want 1000", seenBodies[0].Limit)
+	}
+	if got := seenBodies[0].WithPayload; len(got) != 1 || got[0] != "path" {
+		t.Errorf("with_payload = %v, want [path]", got)
+	}
+	if seenBodies[0].WithVector {
+		t.Error("with_vector = true, want false")
+	}
+	if seenBodies[0].Offset != nil {
+		t.Errorf("first request offset = %#v, want nil", seenBodies[0].Offset)
+	}
+	if seenBodies[1].Offset != "p2" {
+		t.Errorf("second request offset = %#v, want p2", seenBodies[1].Offset)
+	}
+	if len(pts) != 3 {
+		t.Fatalf("points = %d, want 3", len(pts))
+	}
+	want := []ScrollPoint{
+		{ID: "00000000-0000-0000-0000-000000000001", Path: "/n/a.md"},
+		{ID: "00000000-0000-0000-0000-000000000002", Path: "/n/b.md"},
+		{ID: "00000000-0000-0000-0000-000000000003", Path: "/n/c.md"},
+	}
+	for i, w := range want {
+		if pts[i] != w {
+			t.Errorf("point %d = %+v, want %+v", i, pts[i], w)
+		}
+	}
+}
+
+func TestQdrantScrollPointWithoutPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"result": {
+				"points": [
+					{"id": "00000000-0000-0000-0000-0000000000aa", "payload": {}},
+					{"id": "00000000-0000-0000-0000-0000000000bb", "payload": {"path": "/ok.md"}}
+				],
+				"next_page_offset": null
+			},
+			"status": "ok"
+		}`)
+	}))
+	defer srv.Close()
+
+	pts, err := NewQdrantClient(srv.URL).Scroll(context.Background(), "mdx", 0)
+	if err != nil {
+		t.Fatalf("Scroll: %v", err)
+	}
+	if len(pts) != 2 {
+		t.Fatalf("points = %d, want 2", len(pts))
+	}
+	if pts[0].Path != "" {
+		t.Errorf("pts[0].Path = %q, want empty", pts[0].Path)
+	}
+	if pts[1].Path != "/ok.md" {
+		t.Errorf("pts[1].Path = %q, want /ok.md", pts[1].Path)
+	}
+}
+
+func TestQdrantScrollHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	_, err := NewQdrantClient(srv.URL).Scroll(context.Background(), "mdx", 1000)
+	if err == nil {
+		t.Fatal("Scroll: want error")
+	}
+	if !strings.Contains(err.Error(), "mdx") || !strings.Contains(err.Error(), "500") {
+		t.Errorf("err = %q, want substrings [mdx, 500]", err.Error())
+	}
+}
+
 func TestQdrantSearchHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
