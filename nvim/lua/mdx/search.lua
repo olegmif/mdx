@@ -26,6 +26,36 @@ function M.parse(stdout)
 	return decoded, nil
 end
 
+-- M.invoke шлёт `mdx search --format json --limit N <query>` через
+-- vim.system с timeout. Callback on_done(hits, err) вызывается из
+-- vim.schedule_wrap. hits == nil сигнализирует об ошибке; err содержит
+-- человекочитаемое сообщение, готовое для vim.notify.
+function M.invoke(query, on_done)
+	local cfg = require("mdx").config.search
+	local cmd = {
+		cfg.mdx_bin,
+		"search",
+		"--format",
+		"json",
+		"--limit",
+		tostring(cfg.limit),
+		query,
+	}
+	vim.system(cmd, { text = true, timeout = cfg.timeout_ms }, vim.schedule_wrap(function(obj)
+		if obj.code ~= 0 then
+			local stderr = (obj.stderr and obj.stderr ~= "") and obj.stderr or "exit code " .. tostring(obj.code)
+			on_done(nil, "search failed: " .. stderr)
+			return
+		end
+		local hits, err = M.parse(obj.stdout)
+		if not hits then
+			on_done(nil, "failed to parse search output: " .. err)
+			return
+		end
+		on_done(hits, nil)
+	end))
+end
+
 function M.run(query)
 	vim.notify("mdx: search not implemented", vim.log.levels.INFO)
 end
