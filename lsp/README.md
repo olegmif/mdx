@@ -91,9 +91,9 @@ two conditions:
 
 Rows that meet either condition are deleted. Foreign-key `ON DELETE
 CASCADE` drops the associated `links` (where the deleted note is the
-source) and `tags` rows. Incoming links — rows in `links` whose
-`target_path` points at the deleted note — are kept; they correctly
-represent broken links in surviving notes.
+source), `tags` and `embeddings` rows. Incoming links — rows in `links`
+whose `target_path` points at the deleted note — are kept; they
+correctly represent broken links in surviving notes.
 
 `gc` takes no path arguments and has no notion of "scan roots" or
 excluded directory names: a file that exists on disk and is not under an
@@ -101,13 +101,40 @@ ignore prefix is kept, regardless of where it lives. Stat errors other
 than "file not found" (typically permission issues) are reported to
 stderr and the row is preserved.
 
-Flags: `--db`, `--ignore`, `-q`.
+### Qdrant cleanup phase
+
+After the SQLite phase, `gc` attempts to bring the Qdrant collection in
+line with the surviving `notes` rows. The phase is best-effort:
+
+- It runs only when an embedding config is loadable (resolved by the
+  same `--embedding-config` / `MDX_EMBEDDING_CONFIG` / XDG /
+  `~/.config/mdx/embedding.yaml` chain as `mdx embed`). A missing file
+  is **not** an error — `gc` skips this phase silently and the summary
+  ends with `qdrant: skipped`. A parse/validation error logs a warning
+  to stderr and the phase is also skipped.
+- It scrolls every point in the collection and deletes points whose
+  `payload.path` is missing from `notes` after the SQLite phase. Points
+  with no `path` in payload are treated as orphans and deleted too.
+- Each `mdx gc` run is a full sync, not a delta from the previous run:
+  any point left over from earlier failed runs (or inserted by some
+  other path) is caught and removed by the next clean run.
+- Any Qdrant failure (server unreachable, collection missing, HTTP
+  non-2xx) is logged to stderr and the summary ends with
+  `qdrant: error`. The exit code remains 0 — the SQLite phase is the
+  primary contract of `gc` and must not be blocked by Qdrant
+  availability.
+
+Flags: `--db`, `--ignore`, `--embedding-config`, `-q`.
 
 The summary line:
 
 ```
-removed: N, kept: M, elapsed: T
+removed: N, kept: M, qdrant_removed: K, qdrant_kept: L, elapsed: T
 ```
+
+When the Qdrant phase did not run, the `qdrant_removed`/`qdrant_kept`
+pair is replaced with `qdrant: skipped` (no config) or `qdrant: error`
+(config present but the phase failed).
 
 ## Compute embeddings (semantic search)
 
