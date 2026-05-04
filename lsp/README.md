@@ -5,7 +5,9 @@ that re-indexes files on open and save. Indexes markdown files (frontmatter,
 outgoing links, tags) into a SQLite database.
 
 For the project rationale and architecture see `../docs/strategy.md`. For
-milestone breakdowns see `../docs/m0.md` and `../docs/m1.md`.
+milestone breakdowns see `../docs/m0.md` and `../docs/m1.md`. For the
+embeddings/semantic-search subsystem see `../docs/embeddings.md` and
+`../docs/M0_embeddings.md`.
 
 ## Build
 
@@ -107,6 +109,87 @@ The summary line:
 removed: N, kept: M, elapsed: T
 ```
 
+## Compute embeddings (semantic search)
+
+```
+./bin/mdx embed
+```
+
+For every model in the embedding config and every note in the database,
+this computes an embedding via an external HTTP API and upserts it into
+Qdrant as a named vector. Re-runs are idempotent: a note with an
+unchanged `content_hash` is skipped; a note whose `content_hash` differs
+from the recorded one is re-embedded.
+
+Preconditions:
+
+1. `mdx scan` has been run, so the `notes` table is populated.
+2. A Qdrant instance is reachable (default `http://127.0.0.1:6333`).
+3. An embedding server speaking one of the supported protocols is
+   reachable (default `http://127.0.0.1:8888`). Supported
+   `endpoint_kind` values: `openai`, `llama-cpp`, `tei`.
+
+### Minimal config
+
+`~/.config/mdx/embedding.yaml`:
+
+```yaml
+qdrant_url: http://127.0.0.1:6333
+collection: mdx
+
+models:
+  - name: qwen3-embedding-4b
+    endpoint: http://127.0.0.1:8888/v1/embeddings
+    endpoint_kind: openai
+    api_model_name: Qwen/Qwen3-Embedding-4B
+    dim: 2560
+    distance: cosine
+    query_prefix: "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: "
+    document_prefix: ""
+    batch_size: 16
+    default_for_search: true
+```
+
+Multiple `models` entries become multiple named vectors in the same
+collection. With more than one model, exactly one must be marked
+`default_for_search: true`. Only `distance: cosine` is supported on M0.
+
+The config path is resolved as: `--embedding-config` flag →
+`MDX_EMBEDDING_CONFIG` env → `$XDG_CONFIG_HOME/mdx/embedding.yaml` →
+`~/.config/mdx/embedding.yaml`. A missing file is a hard error: `mdx
+embed` does nothing useful without it.
+
+### Flags
+
+- `--db PATH` — override database location (shared with `scan`/`gc`/`lsp`).
+- `--embedding-config PATH` — override embedding config location.
+- `--model NAME` — limit the run to a single model from the config.
+  The Qdrant collection schema still reflects all configured models.
+- `--all` — ignore the `embeddings` table and recompute every note.
+  Useful after changing `query_prefix`/`document_prefix`/`api_model_name`
+  without renaming the model.
+- `-q`, `--quiet` — suppress the summary line.
+
+The summary line:
+
+```
+embedded: N, skipped: M, failed: K, elapsed: T
+```
+
+Per-batch errors (file unreadable, embedding API non-2xx, Qdrant
+upsert failure, SQLite record failure) are written to stderr and
+counted in `failed`; they do not abort the run.
+
+### Limitations
+
+- Removing a note from disk does not remove its point from Qdrant. M0
+  has no garbage-collection path for the vector store; extending
+  `mdx gc` is tracked in `../docs/embeddings.md` (open questions).
+  Until then, a stale point can be removed manually via the Qdrant
+  API or by recreating the collection.
+- A note longer than the model's context window is not chunked and is
+  passed verbatim; truncation is the model's responsibility.
+
 ## Run LSP server
 
 ```
@@ -180,8 +263,10 @@ Default path:
 The directory is created on first run. SQLite is opened in WAL mode, so the
 file is safe to read with `sqlite3` while a scan is in progress.
 
-Schema (version 1) — three tables: `notes`, `links`, `tags`. See
-`internal/db/schema.sql`.
+Schema (version 2) — four tables: `notes`, `links`, `tags`, `embeddings`.
+See `internal/db/schema.sql`. The `embeddings` table records per-note
+per-model `(content_hash, embedded_at)` and is consulted by `mdx embed`
+to skip work; the actual vectors live in Qdrant.
 
 ## Tests
 
@@ -197,9 +282,10 @@ resulting database contents.
 
 ```
 cmd/mdx/          entry point and cobra wiring
-internal/cli/     scan and LSP command runners
-internal/config/  user-level config: ignore file
-internal/db/      SQLite open, migrations, queries
+internal/cli/     scan / gc / lsp / embed command runners
+internal/config/  user-level config: ignore file, embedding.yaml
+internal/db/      SQLite open, migrations, queries (incl. embeddings table)
+internal/embed/   embedding API client, Qdrant client, point id (UUID v5)
 internal/index/   per-file indexing (used by scan and by LSP handlers)
 internal/lsp/     LSP server: handlers, diagnostics, URI helpers
 internal/parse/   frontmatter, links, tags parsers
