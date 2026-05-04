@@ -11,11 +11,17 @@ local defaults = {
 		sql = "<leader>mq",
 		query = "<leader>mr",
 		query_insert = "<leader>mR",
+		search = "<leader>m/",
 	},
 	conceal = true,
 	prompt_filename = false,
 	query_dir = "~/.config/mdx/queries",
 	script_dir = "~/.config/mdx/scripts",
+	search = {
+		mdx_bin = "mdx",
+		limit = 30,
+		timeout_ms = 30000,
+	},
 }
 
 M.config = vim.deepcopy(defaults)
@@ -79,6 +85,10 @@ function M.query_insert()
 	require("mdx.script").query_insert(M.config)
 end
 
+function M.search(query)
+	require("mdx.search").run(query)
+end
+
 function M.setup(opts)
 	M.config = vim.tbl_deep_extend("force", defaults, opts or {})
 	vim.api.nvim_create_user_command("MdxFollow", M.follow, {})
@@ -104,6 +114,10 @@ function M.setup(opts)
 	vim.api.nvim_create_user_command("MdxQueryInsert", function()
 		require("mdx").query_insert()
 	end, {})
+	vim.api.nvim_create_user_command("MdxSearch", function(opts)
+		local q = opts.args ~= "" and opts.args or nil
+		require("mdx").search(q)
+	end, { nargs = "?" })
 end
 
 return M

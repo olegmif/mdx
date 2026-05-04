@@ -64,3 +64,9 @@ if config.keymaps.query_insert then
 		mdx.query_insert()
 	end, { buffer = true, desc = "mdx: run saved lua script (insert)" })
 end
+
+if config.keymaps.search then
+	vim.keymap.set("n", config.keymaps.search, function()
+		mdx.search()
+	end, { buffer = true, desc = "mdx: dense search across notes" })
+end
