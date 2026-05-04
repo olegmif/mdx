@@ -139,6 +139,67 @@ type upsertPoint struct {
 	Payload map[string]any       `json:"payload,omitempty"`
 }
 
+// SearchHit — одна точка, возвращённая Qdrant в ответ на k-NN-поиск.
+// Payload приходит как произвольный объект; вызывающий код вытаскивает
+// нужные поля сам.
+type SearchHit struct {
+	ID      string
+	Score   float32
+	Payload map[string]any
+}
+
+type searchRequest struct {
+	Vector      searchVector `json:"vector"`
+	Limit       int          `json:"limit"`
+	WithPayload bool         `json:"with_payload"`
+}
+
+type searchVector struct {
+	Name   string    `json:"name"`
+	Vector []float32 `json:"vector"`
+}
+
+type searchResponse struct {
+	Result []searchPoint `json:"result"`
+}
+
+type searchPoint struct {
+	ID      any            `json:"id"`
+	Score   float32        `json:"score"`
+	Payload map[string]any `json:"payload"`
+}
+
+// Search выполняет k-NN-поиск по named vector vectorName в коллекции
+// collection и возвращает не более limit точек с payload. Без фильтров.
+// Сортировку Qdrant делает на своей стороне; клиент порядок не меняет.
+func (q *QdrantClient) Search(ctx context.Context, collection, vectorName string, vector []float32, limit int) ([]SearchHit, error) {
+	body, err := json.Marshal(searchRequest{
+		Vector:      searchVector{Name: vectorName, Vector: vector},
+		Limit:       limit,
+		WithPayload: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("qdrant: marshal search %q: %w", collection, err)
+	}
+	op := fmt.Sprintf("search %q", collection)
+	var resp searchResponse
+	if err := q.doJSONReply(ctx, http.MethodPost,
+		"/collections/"+collection+"/points/search", body, op, &resp); err != nil {
+		return nil, err
+	}
+	hits := make([]SearchHit, len(resp.Result))
+	for i, r := range resp.Result {
+		// id у Qdrant может быть UUID-строкой или uint64; на M0–M1 наши
+		// id всегда UUID, но защищаемся от регрессии типа.
+		hits[i] = SearchHit{
+			ID:      fmt.Sprintf("%v", r.ID),
+			Score:   r.Score,
+			Payload: r.Payload,
+		}
+	}
+	return hits, nil
+}
+
 // Upsert загружает batch точек одним запросом, ждёт подтверждения
 // записи (`wait=true`). Пустой batch — no-op без обращения к серверу.
 func (q *QdrantClient) Upsert(ctx context.Context, collection string, points []Point) error {
@@ -191,6 +252,32 @@ func (q *QdrantClient) doJSON(ctx context.Context, method, path string, body []b
 	if err := json.NewDecoder(resp.Body).Decode(&ack); err == nil &&
 		ack.Status != "" && ack.Status != "ok" {
 		return fmt.Errorf("qdrant: %s: status=%s", op, ack.Status)
+	}
+	return nil
+}
+
+// doJSONReply отправляет body как JSON и декодирует тело успешного
+// ответа в out. Используется операциями, которым нужно прочитать
+// результат (Search). Ack-only вызовы (createCollection, patchCollection,
+// Upsert) ходят через doJSON, чтобы не таскать лишний параметр.
+func (q *QdrantClient) doJSONReply(ctx context.Context, method, path string, body []byte, op string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, method, q.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("qdrant: build %s: %w", op, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := q.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("qdrant: %s: %w", op, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode/100 != 2 {
+		return q.statusError(resp, op)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("qdrant: %s: decode: %w", op, err)
 	}
 	return nil
 }

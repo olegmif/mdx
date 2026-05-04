@@ -214,6 +214,82 @@ func TestQdrantUpsertEmpty(t *testing.T) {
 	}
 }
 
+func TestQdrantSearch(t *testing.T) {
+	var seenURL *url.URL
+	var seenBody searchRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenURL = r.URL
+		if err := json.NewDecoder(r.Body).Decode(&seenBody); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"result": [
+				{"id": "00000000-0000-0000-0000-000000000001", "score": 0.9, "payload": {"path": "/n/a.md", "title": "A"}},
+				{"id": "00000000-0000-0000-0000-000000000002", "score": 0.7, "payload": {"path": "/n/b.md"}}
+			],
+			"status": "ok"
+		}`)
+	}))
+	defer srv.Close()
+
+	c := NewQdrantClient(srv.URL)
+	hits, err := c.Search(context.Background(), "mdx", "m1", []float32{0.1, 0.2}, 5)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	if seenURL.Path != "/collections/mdx/points/search" {
+		t.Errorf("path = %s, want /collections/mdx/points/search", seenURL.Path)
+	}
+	if seenBody.Vector.Name != "m1" {
+		t.Errorf("vector.name = %q, want m1", seenBody.Vector.Name)
+	}
+	if got := seenBody.Vector.Vector; len(got) != 2 || got[0] != 0.1 || got[1] != 0.2 {
+		t.Errorf("vector.vector = %v, want [0.1 0.2]", got)
+	}
+	if seenBody.Limit != 5 {
+		t.Errorf("limit = %d, want 5", seenBody.Limit)
+	}
+	if !seenBody.WithPayload {
+		t.Error("with_payload = false, want true")
+	}
+
+	if len(hits) != 2 {
+		t.Fatalf("hits = %d, want 2", len(hits))
+	}
+	if hits[0].ID != "00000000-0000-0000-0000-000000000001" {
+		t.Errorf("hits[0].ID = %s", hits[0].ID)
+	}
+	if hits[0].Score != 0.9 {
+		t.Errorf("hits[0].Score = %v, want 0.9", hits[0].Score)
+	}
+	if hits[0].Payload["path"] != "/n/a.md" {
+		t.Errorf("hits[0].Payload[path] = %v", hits[0].Payload["path"])
+	}
+	if hits[0].Payload["title"] != "A" {
+		t.Errorf("hits[0].Payload[title] = %v", hits[0].Payload["title"])
+	}
+	if _, ok := hits[1].Payload["title"]; ok {
+		t.Errorf("hits[1] has title in payload, want absent")
+	}
+}
+
+func TestQdrantSearchHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	_, err := NewQdrantClient(srv.URL).Search(context.Background(), "mdx", "m1", []float32{0.1}, 5)
+	if err == nil {
+		t.Fatal("Search: want error")
+	}
+	if !strings.Contains(err.Error(), "mdx") || !strings.Contains(err.Error(), "500") {
+		t.Errorf("err = %q, want substrings [mdx, 500]", err.Error())
+	}
+}
+
 func TestQdrantUpsertHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusBadGateway)
