@@ -212,10 +212,27 @@ func runGC(cmd *cobra.Command, args []string) error {
 	}
 
 	if !flagQuiet {
-		fmt.Printf("removed: %d, kept: %d, elapsed: %s\n",
-			stats.Deleted, stats.Kept, stats.Elapsed)
+		fmt.Printf("removed: %d, kept: %d%s, elapsed: %s\n",
+			stats.Deleted, stats.Kept, gcQdrantSummary(stats), stats.Elapsed)
 	}
 	return nil
+}
+
+// gcQdrantSummary renders the Qdrant phase tail of `mdx gc` summary.
+// Returns the leading ", " separator as part of the string so the
+// caller can interpolate it inline; empty string when there is nothing
+// extra to report (currently never — every run sets exactly one of the
+// three branches).
+func gcQdrantSummary(stats cli.GCStats) string {
+	switch {
+	case stats.QdrantSkipped:
+		return ", qdrant: skipped"
+	case stats.QdrantFailed:
+		return ", qdrant: error"
+	default:
+		return fmt.Sprintf(", qdrant_removed: %d, qdrant_kept: %d",
+			stats.QdrantDeleted, stats.QdrantKept)
+	}
 }
 
 func runLSP(cmd *cobra.Command, args []string) error {

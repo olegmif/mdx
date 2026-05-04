@@ -115,10 +115,44 @@ func RunGC(ctx context.Context, conn *sql.DB, ignorePrefixes []string, embedCfg 
 
 	if embedCfg == nil {
 		stats.QdrantSkipped = true
+	} else {
+		notesPaths, err := loadNotesPaths(ctx, conn)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "mdx: gc: qdrant: read notes paths: %v\n", err)
+			stats.QdrantFailed = true
+		} else {
+			deleted, kept, failed := cleanQdrant(ctx, *embedCfg, notesPaths)
+			stats.QdrantDeleted = deleted
+			stats.QdrantKept = kept
+			stats.QdrantFailed = stats.QdrantFailed || failed
+		}
 	}
 
 	stats.Elapsed = time.Since(start)
 	return stats, nil
+}
+
+// loadNotesPaths reads the current set of paths from notes into a
+// map. Used by the Qdrant cleanup phase to compute the diff against
+// scrolled point payloads.
+func loadNotesPaths(ctx context.Context, conn *sql.DB) (map[string]struct{}, error) {
+	rows, err := conn.QueryContext(ctx, `SELECT path FROM notes`)
+	if err != nil {
+		return nil, fmt.Errorf("select notes: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]struct{})
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, fmt.Errorf("scan path: %w", err)
+		}
+		out[p] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return out, nil
 }
 
 // cleanQdrant performs the Qdrant phase of gc: scrolls every point in
