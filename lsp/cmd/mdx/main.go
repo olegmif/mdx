@@ -16,11 +16,14 @@ import (
 )
 
 var (
-	flagDB       string
-	flagIgnore   string
-	flagExcludes []string
-	flagQuiet    bool
-	flagLog      string
+	flagDB          string
+	flagIgnore      string
+	flagExcludes    []string
+	flagQuiet       bool
+	flagLog         string
+	flagEmbedConfig string
+	flagEmbedModel  string
+	flagEmbedAll    bool
 )
 
 var rootCmd = &cobra.Command{
@@ -47,6 +50,13 @@ var lspCmd = &cobra.Command{
 	RunE:  runLSP,
 }
 
+var embedCmd = &cobra.Command{
+	Use:   "embed",
+	Short: "Compute embeddings for indexed notes and upsert them into Qdrant",
+	Args:  cobra.NoArgs,
+	RunE:  runEmbed,
+}
+
 func init() {
 	rootCmd.PersistentFlags().StringVar(&flagDB, "db", "", "path to SQLite database (default: $XDG_DATA_HOME/mdx/mdx.db)")
 	lspCmd.Flags().StringVar(&flagLog, "log", "", "path to LSP log file (default: $XDG_STATE_HOME/mdx/lsp.log)")
@@ -60,9 +70,18 @@ func init() {
 	gcCmd.Flags().StringVar(&flagIgnore, "ignore", "", "path to ignore file (default: $XDG_CONFIG_HOME/mdx/ignore)")
 	gcCmd.Flags().BoolVarP(&flagQuiet, "quiet", "q", false, "suppress summary line")
 
+	embedCmd.Flags().StringVar(&flagEmbedConfig, "embedding-config", "",
+		"path to embedding config (default: $XDG_CONFIG_HOME/mdx/embedding.yaml)")
+	embedCmd.Flags().StringVar(&flagEmbedModel, "model", "",
+		"limit run to a single model name from config")
+	embedCmd.Flags().BoolVar(&flagEmbedAll, "all", false,
+		"ignore embeddings table and recompute every note")
+	embedCmd.Flags().BoolVarP(&flagQuiet, "quiet", "q", false, "suppress summary line")
+
 	rootCmd.AddCommand(scanCmd)
 	rootCmd.AddCommand(gcCmd)
 	rootCmd.AddCommand(lspCmd)
+	rootCmd.AddCommand(embedCmd)
 }
 
 func main() {
@@ -206,4 +225,8 @@ func runLSP(cmd *cobra.Command, args []string) error {
 	defer stop()
 
 	return cli.RunLSP(ctx, conn, dbPath, logPath, ignorePrefixes)
+}
+
+func runEmbed(cmd *cobra.Command, args []string) error {
+	return fmt.Errorf("embed: not implemented")
 }
