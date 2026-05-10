@@ -8,14 +8,23 @@ if config.conceal then
 	vim.opt_local.concealcursor = ""
 end
 
-if config.keymaps.follow then
-	vim.keymap.set("n", config.keymaps.follow, function()
+-- follow / follow_split поддерживают список биндингов: дефолт даёт и
+-- <leader>m{f,s}, и <CR>/<C-CR>. false целиком отключает биндинг.
+local function as_list(v)
+	if not v then
+		return {}
+	end
+	return type(v) == "table" and v or { v }
+end
+
+for _, lhs in ipairs(as_list(config.keymaps.follow)) do
+	vim.keymap.set("n", lhs, function()
 		mdx.follow()
 	end, { buffer = true, desc = "mdx: follow link" })
 end
 
-if config.keymaps.follow_split then
-	vim.keymap.set("n", config.keymaps.follow_split, function()
+for _, lhs in ipairs(as_list(config.keymaps.follow_split)) do
+	vim.keymap.set("n", lhs, function()
 		mdx.follow_split()
 	end, { buffer = true, desc = "mdx: follow link in vsplit" })
 end

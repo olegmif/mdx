@@ -2,8 +2,10 @@ local M = {}
 
 local defaults = {
 	keymaps = {
-		follow = "<leader>mf",
-		follow_split = "<leader>ms",
+		-- follow / follow_split допускают как строку, так и список строк
+		-- (в любом из вариантов false полностью отключает биндинг)
+		follow = { "<leader>mf", "<CR>" },
+		follow_split = { "<leader>ms", "<C-CR>" },
 		insert_link = "<leader>mi",
 		tag_search = "<leader>mt",
 		extract = "<leader>me",
